@@ -1,8 +1,18 @@
 from fastapi import FastAPI
-from schemas import Match, PromptRequest 
-from models import obtener_practicas, obtener_practicas_recientes, obtener_respuesta_chatgpt, obtener_texto_pdf_de_url, comparar_practicas_con_cv  
+from fastapi.middleware.cors import CORSMiddleware
+from schemas import Match, PromptRequest
+from models import obtener_practicas, obtener_practicas_recientes, obtener_respuesta_chatgpt, obtener_texto_pdf_de_url, comparar_practicas_con_cv
 
 app = FastAPI()
+
+# Configuración de CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permitir solicitudes de cualquier origen, ajusta según sea necesario
+    allow_credentials=True,
+    allow_methods=["*"],  # Permitir todos los métodos HTTP
+    allow_headers=["*"],  # Permitir todos los encabezados
+)
 
 @app.post("/match-practices")
 async def match_practices(match: Match):
@@ -24,12 +34,9 @@ async def match_practices(match: Match):
 def get_practicas():
     return obtener_practicas()
 
-
-
 @app.get("/practicas-recientes")
 def get_practicas():
     return obtener_practicas_recientes()
-
 
 @app.post("/chatgpt")
 async def chatgpt_response(request: PromptRequest):
