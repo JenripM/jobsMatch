@@ -8,10 +8,10 @@ app = FastAPI()
 # Configuración de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permitir solicitudes de cualquier origen, ajusta según sea necesario
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Permitir todos los métodos HTTP
-    allow_headers=["*"],  # Permitir todos los encabezados
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.post("/match-practices")
@@ -26,16 +26,17 @@ async def match_practices(match: Match):
     practicas = obtener_practicas_recientes()
 
     # Comparar las prácticas con el CV extraído
-    practicas_con_similitud = comparar_practicas_con_cv(cv_texto, practicas, match.puesto)
+    practicas_con_similitud = await comparar_practicas_con_cv(cv_texto, practicas, match.puesto)
 
     return {"practicas": practicas_con_similitud}
 
+
 @app.get("/practicas")
-def get_practicas():
+def get_all_practicas():
     return obtener_practicas()
 
 @app.get("/practicas-recientes")
-def get_practicas():
+def get_recent_practicas():
     return obtener_practicas_recientes()
 
 @app.post("/chatgpt")
