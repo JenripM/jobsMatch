@@ -3,7 +3,7 @@ from firebase_admin import credentials, firestore
 import os
 
 # Usar el archivo de credenciales correcto
-cred_path = "../jobs-update-e3e63-firebase-adminsdk-fbsvc-4ff0cc214d.json"
+cred_path = "jobs-update-e3e63-firebase-adminsdk-fbsvc-4ff0cc214d.json"
 print(f"🔍 Buscando archivo Firebase en: {os.path.abspath(cred_path)}")
 print(f"📁 Archivo existe: {os.path.exists(cred_path)}")
 
