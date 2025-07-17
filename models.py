@@ -172,7 +172,7 @@ async def procesar_practica_con_prompt_unificado(cv_texto: str, practica: dict, 
 4. Similitud semántica general (25%): Compara todo el contenido del CV con la descripción de la vacante utilizando NLP o embeddings.
 5. Juicio del sistema (10%): Un puntaje de ajuste basado en los criterios anteriores y evalúa si el perfil tiene sentido para esta práctica.
 
-IMPORTANTE: Responde ÚNICAMENTE con un JSON válido con esta estructura exacta (sin texto adicional), SI O SI DEBE SER UN JSON PERFECTO ASI COMO TE DOY EL EJEMPLO, Generame como te di en el ejemplo, debe ser un json perfecto:
+IMPORTANTE: Responde ÚNICAMENTE con un JSON válido con esta estructura exacta (sin texto adicional), SI O SI DEBE SER UN JSON PERFECTO ASI COMO TE DOY EL EJEMPLO, Generame como te di en el ejemplo, debe ser un json:
 
 {{
   "requisitos_tecnicos": [número entre 0-10],
@@ -262,11 +262,11 @@ CRITERIOS:
                     'afinidad_sector': 0,
                     'similitud_semantica': 0,
                     'juicio_sistema': 0,
-                    'justificacion_requisitos': "No se relaciona",
-                    'justificacion_puesto': "No se relaciona",
-                    'justificacion_afinidad': "No se relaciona",
-                    'justificacion_semantica': "No se relaciona",
-                    'justificacion_juicio': "No se relaciona""
+                    'justificacion_requisitos': "Error en la justificación de los requisitos técnicos.",
+                    'justificacion_puesto': "Error en la justificación del puesto.",
+                    'justificacion_afinidad': "Error en la afinidad con el sector.",
+                    'justificacion_semantica': "Error en la similitud semántica.",
+                    'justificacion_juicio': "Error en el juicio del sistema."
                 }
             except ValueError as e:
                 print(f"Error al convertir los valores: {e}")
@@ -292,11 +292,11 @@ CRITERIOS:
                 'afinidad_sector': 0,
                 'similitud_semantica': 0,
                 'juicio_sistema': 0,
-                'justificacion_requisitos': "No se relaciona",
-                'justificacion_puesto': "No se relaciona",
-                'justificacion_afinidad': "No se relaciona",
-                'justificacion_semantica': "No se relaciona",
-                'justificacion_juicio': "No se relaciona"
+                'justificacion_requisitos': "Respuesta inválida o incompleta de ChatGPT.",
+                'justificacion_puesto': "Respuesta inválida o incompleta de ChatGPT.",
+                'justificacion_afinidad': "Respuesta inválida o incompleta de ChatGPT.",
+                'justificacion_semantica': "Respuesta inválida o incompleta de ChatGPT.",
+                'justificacion_juicio': "Respuesta inválida o incompleta de ChatGPT."
             }
 
         # Agregar los resultados a la práctica
