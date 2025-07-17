@@ -152,28 +152,39 @@ def obtener_texto_pdf_de_url(cv_url: str):
 # ==========================================
 # OPTIMIZACIÓN 1: PROMPT UNIFICADO DE CHATGPT
 # ==========================================
+# ==========================================
+# FUNCION CON NUEVO CRITERIO DE SIMILITUD
+# ==========================================
 async def procesar_practica_con_prompt_unificado(cv_texto: str, practica: dict, puesto: str):
     """
-    Optimización: Una sola llamada a ChatGPT en lugar de 8 llamadas separadas
-    Esto debería reducir el tiempo en un 75-87%
+    Optimización: Evaluar la compatibilidad con criterios más detallados.
+    Los criterios ahora están más alineados con la descripción de requisitos.
     """
     descripcion = practica['descripcion']
     title = practica['title']
     
-    # Prompt unificado que obtiene toda la información de una vez
-    prompt_unificado = f"""Analiza la compatibilidad entre este CV y esta práctica laboral.
+    # Prompt unificado con los nuevos criterios de evaluación
+    prompt_unificado = f"""Analiza la compatibilidad entre este CV y esta práctica laboral según los siguientes criterios:
+
+1. Requisitos técnicos (10%): Evalúa si el CV cumple con lo mínimo que pide la empresa. Se consideran cosas como idiomas requeridos, herramientas técnicas y nivel de estudios.
+2. Similitud con el puesto (40%): Evalúa qué tan alineado está el perfil con el puesto solicitado. Mide si el estudiante tiene experiencia o formación relevante, o si el puesto tiene relación con su trayectoria o intereses.
+3. Afinidad con el sector o tipo de empresa (15%): Evalúa si el estudiante tiene vínculo con el sector de la empresa.
+4. Similitud semántica general (25%): Compara todo el contenido del CV con la descripción de la vacante utilizando NLP o embeddings.
+5. Juicio del sistema (10%): Un puntaje de ajuste basado en los criterios anteriores y evalúa si el perfil tiene sentido para esta práctica.
 
 IMPORTANTE: Responde ÚNICAMENTE con un JSON válido con esta estructura exacta (sin texto adicional):
 
 {{
-  "similitud_requisitos": [número entre 0-50],
-  "similitud_titulo": [número entre 0-20],
-  "similitud_experiencia": [número entre 0-10],
-  "similitud_macro": [número entre 0-20],
-  "justificacion_requisitos": "[justificación de similitud entre CV y requisitos de la práctica]",
-  "justificacion_titulo": "[justificación de similitud entre puesto y título de la práctica]", 
-  "justificacion_experiencia": "[justificación de experiencia en startup o similar]",
-  "justificacion_macro": "[justificación de compatibilidad general]"
+  "requisitos_tecnicos": [número entre 0-10],
+  "similitud_puesto": [número entre 0-40],
+  "afinidad_sector": [número entre 0-15],
+  "similitud_semantica": [número entre 0-25],
+  "juicio_sistema": [número entre 0-10],
+  "justificacion_requisitos": "[justificación de los requisitos técnicos]",
+  "justificacion_puesto": "[justificación de la similitud con el puesto]",
+  "justificacion_afinidad": "[justificación de la afinidad con el sector]",
+  "justificacion_semantica": "[justificación semántica general]",
+  "justificacion_juicio": "[justificación del juicio final del sistema]"
 }}
 
 DATOS PARA ANALIZAR:
@@ -191,59 +202,105 @@ Puesto solicitado:
 {puesto}
 
 CRITERIOS:
-- similitud_requisitos: Compatibilidad entre habilidades del CV y requisitos (0-50)
-- similitud_titulo: Relación entre puesto solicitado y título de práctica (0-20)
-- similitud_experiencia: Experiencia en startups o organizaciones similares (0-10)
-- similitud_macro: Compatibilidad general del perfil (0-20)
+- requisitos_tecnicos: Cumplimiento de requisitos básicos de la práctica.
+- similitud_puesto: Relación entre el perfil y el puesto solicitado.
+- afinidad_sector: Compatibilidad con el sector o tipo de empresa.
+- similitud_semantica: Coincidencias semánticas entre el CV y la vacante.
+- juicio_sistema: Puntaje de ajuste general.
 """
 
     try:
         # Una sola llamada async a ChatGPT
         respuesta_json = await asyncio.to_thread(obtener_respuesta_chatgpt, prompt_unificado)
         
-        # Intentar parsear la respuesta JSON
-        try:
-            # Limpiar la respuesta en caso de que tenga texto extra
-            respuesta_limpia = respuesta_json.strip()
-            if respuesta_limpia.startswith('```json'):
-                respuesta_limpia = respuesta_limpia[7:]
-            if respuesta_limpia.endswith('```'):
-                respuesta_limpia = respuesta_limpia[:-3]
-            
-            resultado = json.loads(respuesta_limpia)
-            
-            # Validar que tenemos todos los campos necesarios
-            campos_requeridos = [
-                'similitud_requisitos', 'similitud_titulo', 'similitud_experiencia', 
-                'similitud_macro', 'justificacion_requisitos', 'justificacion_titulo',
-                'justificacion_experiencia', 'justificacion_macro'
-            ]
-            
-            for campo in campos_requeridos:
-                if campo not in resultado:
-                    resultado[campo] = 0 if 'similitud' in campo else "No disponible"
-            
-            # Asegurar que los valores numéricos sean válidos
-            resultado['similitud_requisitos'] = max(0, min(50, float(resultado['similitud_requisitos'])))
-            resultado['similitud_titulo'] = max(0, min(20, float(resultado['similitud_titulo'])))
-            resultado['similitud_experiencia'] = max(0, min(10, float(resultado['similitud_experiencia'])))
-            resultado['similitud_macro'] = max(0, min(20, float(resultado['similitud_macro'])))
-            
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            print(f"Error parsing JSON response: {e}")
-            print(f"Raw response: {respuesta_json}")
-            # Valores por defecto en caso de error
-            resultado = {
-                'similitud_requisitos': 0,
-                'similitud_titulo': 0, 
-                'similitud_experiencia': 0,
-                'similitud_macro': 0,
-                'justificacion_requisitos': f"Error al procesar respuesta: {str(e)}",
-                'justificacion_titulo': "Error al procesar respuesta",
-                'justificacion_experiencia': "Error al procesar respuesta", 
-                'justificacion_macro': "Error al procesar respuesta"
-            }
+        # Imprimir la respuesta cruda para depuración
+        print(f"Respuesta cruda de ChatGPT: {respuesta_json}")
         
+        # Limpiar la respuesta en caso de que tenga texto extra no deseado
+        respuesta_limpia = respuesta_json.strip()
+
+        # Si la respuesta contiene texto no estructurado antes de un JSON, extraemos solo el JSON
+        if respuesta_limpia.startswith('-'):
+            start_index = respuesta_limpia.find("{")
+            if start_index != -1:
+                respuesta_limpia = respuesta_limpia[start_index:]
+            else:
+                raise ValueError("La respuesta no contiene un JSON válido")
+
+        # Intentamos asegurar que la respuesta sea un JSON válido
+        if respuesta_limpia.startswith("{") and respuesta_limpia.endswith("}"):
+            try:
+                # Intentar parsear la respuesta JSON
+                resultado = json.loads(respuesta_limpia)
+                
+                # Verificar que todos los campos estén presentes en el resultado
+                campos_requeridos = [
+                    'requisitos_tecnicos', 'similitud_puesto', 'afinidad_sector', 
+                    'similitud_semantica', 'juicio_sistema', 'justificacion_requisitos', 
+                    'justificacion_puesto', 'justificacion_afinidad', 'justificacion_semantica',
+                    'justificacion_juicio'
+                ]
+                
+                # Verificar si los campos están vacíos y no asignar valores por defecto sin justificar el error
+                for campo in campos_requeridos:
+                    if campo not in resultado or resultado[campo] in [None, '']:
+                        print(f"Campo {campo} no presente o vacío en la respuesta")
+                        resultado[campo] = "No disponible"  # Asignar un valor por defecto en vez de fallar
+
+                # Asegurar que los valores numéricos sean válidos
+                resultado['requisitos_tecnicos'] = max(0, min(10, float(resultado.get('requisitos_tecnicos', 0))))
+                resultado['similitud_puesto'] = max(0, min(40, float(resultado.get('similitud_puesto', 0))))
+                resultado['afinidad_sector'] = max(0, min(15, float(resultado.get('afinidad_sector', 0))))
+                resultado['similitud_semantica'] = max(0, min(25, float(resultado.get('similitud_semantica', 0))))
+                resultado['juicio_sistema'] = max(0, min(10, float(resultado.get('juicio_sistema', 0))))
+
+            except json.JSONDecodeError as e:
+                print(f"Error parsing JSON response: {e}")
+                print(f"Raw response: {respuesta_limpia}")
+                # Forzar valores por defecto para los campos numéricos
+                resultado = {
+                    'requisitos_tecnicos': 0,
+                    'similitud_puesto': 0,
+                    'afinidad_sector': 0,
+                    'similitud_semantica': 0,
+                    'juicio_sistema': 0,
+                    'justificacion_requisitos': "No disponible",
+                    'justificacion_puesto': "No disponible",
+                    'justificacion_afinidad': "No disponible",
+                    'justificacion_semantica': "No disponible",
+                    'justificacion_juicio': "No disponible"
+                }
+            except ValueError as e:
+                print(f"Error al convertir los valores: {e}")
+                # Forzar valores por defecto para los campos numéricos
+                resultado = {
+                    'requisitos_tecnicos': 0,
+                    'similitud_puesto': 0,
+                    'afinidad_sector': 0,
+                    'similitud_semantica': 0,
+                    'juicio_sistema': 0,
+                    'justificacion_requisitos': "No disponible",
+                    'justificacion_puesto': "No disponible",
+                    'justificacion_afinidad': "No disponible",
+                    'justificacion_semantica': "No disponible",
+                    'justificacion_juicio': "No disponible"
+                }
+
+        else:
+            # Si no es un JSON válido, asignar valores predeterminados
+            resultado = {
+                'requisitos_tecnicos': 0,
+                'similitud_puesto': 0,
+                'afinidad_sector': 0,
+                'similitud_semantica': 0,
+                'juicio_sistema': 0,
+                'justificacion_requisitos': "No disponible",
+                'justificacion_puesto': "No disponible",
+                'justificacion_afinidad': "No disponible",
+                'justificacion_semantica': "No disponible",
+                'justificacion_juicio': "No disponible"
+            }
+
         # Agregar los resultados a la práctica
         practica_con_resultados = practica.copy()
         practica_con_resultados.update(resultado)
@@ -252,20 +309,8 @@ CRITERIOS:
         
     except Exception as e:
         print(f"Error procesando práctica {practica.get('title', 'Unknown')}: {e}")
-        # Retornar práctica con valores por defecto en caso de error
-        practica_con_resultados = practica.copy()
-        practica_con_resultados.update({
-            'similitud_requisitos': 0,
-            'similitud_titulo': 0,
-            'similitud_experiencia': 0, 
-            'similitud_macro': 0,
-            'justificacion_requisitos': f"Error: {str(e)}",
-            'justificacion_titulo': f"Error: {str(e)}",
-            'justificacion_experiencia': f"Error: {str(e)}",
-            'justificacion_macro': f"Error: {str(e)}"
-        })
-        return practica_con_resultados
-
+        # Retornar un error detallado si ocurre una excepción
+        return {"error": f"Error procesando práctica: {str(e)}"}
 
 # ==========================================
 # OPTIMIZACIÓN 2: PARALELIZACIÓN COMPLETA
@@ -291,26 +336,42 @@ async def comparar_practicas_con_cv(cv_texto: str, practicas: list, puesto: str)
     # Filtrar errores y mantener solo resultados válidos
     resultados_validos = []
     for i, resultado in enumerate(practicas_con_similitud):
-        if isinstance(resultado, Exception):
-            print(f"Error procesando práctica {i}: {resultado}")
-            # Agregar práctica con valores por defecto
+        if isinstance(resultado, dict) and 'error' in resultado:
+            print(f"Error procesando práctica {i}: {resultado['error']}")
+            # Agregar mensaje de error en caso de fallo
             practica_error = practicas[i].copy()
             practica_error.update({
                 'similitud_requisitos': 0,
-                'similitud_titulo': 0,
-                'similitud_experiencia': 0,
-                'similitud_macro': 0,
-                'justificacion_requisitos': f"Error: {str(resultado)}",
-                'justificacion_titulo': f"Error: {str(resultado)}",
-                'justificacion_experiencia': f"Error: {str(resultado)}",
-                'justificacion_macro': f"Error: {str(resultado)}"
+                'similitud_puesto': 0,
+                'afinidad_sector': 0,
+                'similitud_semantica': 0,
+                'juicio_sistema': 0,
+                'justificacion_requisitos': f"Error: {resultado['error']}",
+                'justificacion_puesto': f"Error: {resultado['error']}",
+                'justificacion_afinidad': f"Error: {resultado['error']}",
+                'justificacion_semantica': f"Error: {resultado['error']}",
+                'justificacion_juicio': f"Error: {resultado['error']}",
+                'similitud_total': 0  # Similitud total en caso de error
             })
             resultados_validos.append(practica_error)
         else:
+            # Calcular similitud total sumando los 5 criterios
+            similitud_total = sum([
+                resultado.get('requisitos_tecnicos', 0),
+                resultado.get('similitud_puesto', 0),
+                resultado.get('afinidad_sector', 0),
+                resultado.get('similitud_semantica', 0),
+                resultado.get('juicio_sistema', 0)
+            ])
+            
+            # Agregar la similitud total a la práctica
+            resultado['similitud_total'] = similitud_total
+            
+            # Agregar el resultado procesado a la lista
             resultados_validos.append(resultado)
-    
-    # Ordenar por similitud total (requisitos principalmente)
-    resultados_validos.sort(key=lambda x: x['similitud_requisitos'], reverse=True)
+
+    # Ordenar por similitud_total (de mayor a menor)
+    resultados_validos.sort(key=lambda x: x.get('similitud_total', 0), reverse=True)
     
     end_time = time.time()
     tiempo_total = end_time - start_time
@@ -318,7 +379,6 @@ async def comparar_practicas_con_cv(cv_texto: str, practicas: list, puesto: str)
     print(f"📊 Promedio por práctica: {tiempo_total/len(practicas):.2f} segundos")
     
     return resultados_validos
-
 
 # ==========================================
 # FUNCIÓN ASYNC HELPER (MANTENER COMPATIBILIDAD)
