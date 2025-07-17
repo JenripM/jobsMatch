@@ -172,7 +172,7 @@ async def procesar_practica_con_prompt_unificado(cv_texto: str, practica: dict, 
 4. Similitud semántica general (25%): Compara todo el contenido del CV con la descripción de la vacante utilizando NLP o embeddings.
 5. Juicio del sistema (10%): Un puntaje de ajuste basado en los criterios anteriores y evalúa si el perfil tiene sentido para esta práctica.
 
-IMPORTANTE: Responde ÚNICAMENTE con un JSON válido con esta estructura exacta (sin texto adicional):
+IMPORTANTE: Responde ÚNICAMENTE con un JSON válido con esta estructura exacta (sin texto adicional), SI O SI DEBE SER UN JSON PERFECTO ASI COMO TE DOY EL EJEMPLO, Generame como te di en el ejemplo, debe ser un json perfecto:
 
 {{
   "requisitos_tecnicos": [número entre 0-10],
@@ -213,9 +213,6 @@ CRITERIOS:
         # Una sola llamada async a ChatGPT
         respuesta_json = await asyncio.to_thread(obtener_respuesta_chatgpt, prompt_unificado)
         
-        # Imprimir la respuesta cruda para depuración
-        print(f"Respuesta cruda de ChatGPT: {respuesta_json}")
-        
         # Limpiar la respuesta en caso de que tenga texto extra no deseado
         respuesta_limpia = respuesta_json.strip()
 
@@ -241,11 +238,12 @@ CRITERIOS:
                     'justificacion_juicio'
                 ]
                 
-                # Verificar si los campos están vacíos y no asignar valores por defecto sin justificar el error
+                # Verificar si los campos están vacíos y dar justificación detallada
                 for campo in campos_requeridos:
                     if campo not in resultado or resultado[campo] in [None, '']:
+                        # Asignar un valor detallado en vez de "No disponible"
                         print(f"Campo {campo} no presente o vacío en la respuesta")
-                        resultado[campo] = "No disponible"  # Asignar un valor por defecto en vez de fallar
+                        resultado[campo] = f"Campo '{campo}' no proporcionado por el modelo de ChatGPT."
 
                 # Asegurar que los valores numéricos sean válidos
                 resultado['requisitos_tecnicos'] = max(0, min(10, float(resultado.get('requisitos_tecnicos', 0))))
@@ -264,11 +262,11 @@ CRITERIOS:
                     'afinidad_sector': 0,
                     'similitud_semantica': 0,
                     'juicio_sistema': 0,
-                    'justificacion_requisitos': "No disponible",
-                    'justificacion_puesto': "No disponible",
-                    'justificacion_afinidad': "No disponible",
-                    'justificacion_semantica': "No disponible",
-                    'justificacion_juicio': "No disponible"
+                    'justificacion_requisitos': "No se relaciona",
+                    'justificacion_puesto': "No se relaciona",
+                    'justificacion_afinidad': "No se relaciona",
+                    'justificacion_semantica': "No se relaciona",
+                    'justificacion_juicio': "No se relaciona""
                 }
             except ValueError as e:
                 print(f"Error al convertir los valores: {e}")
@@ -279,26 +277,26 @@ CRITERIOS:
                     'afinidad_sector': 0,
                     'similitud_semantica': 0,
                     'juicio_sistema': 0,
-                    'justificacion_requisitos': "No disponible",
-                    'justificacion_puesto': "No disponible",
-                    'justificacion_afinidad': "No disponible",
-                    'justificacion_semantica': "No disponible",
-                    'justificacion_juicio': "No disponible"
+                    'justificacion_requisitos': "Error al calcular los requisitos técnicos.",
+                    'justificacion_puesto': "Error al calcular la similitud con el puesto.",
+                    'justificacion_afinidad': "Error al calcular la afinidad con el sector.",
+                    'justificacion_semantica': "Error al calcular la similitud semántica.",
+                    'justificacion_juicio': "Error al calcular el juicio final."
                 }
 
         else:
-            # Si no es un JSON válido, asignar valores predeterminados
+            # Si no es un JSON válido, asignar valores predeterminados con justificaciones específicas
             resultado = {
                 'requisitos_tecnicos': 0,
                 'similitud_puesto': 0,
                 'afinidad_sector': 0,
                 'similitud_semantica': 0,
                 'juicio_sistema': 0,
-                'justificacion_requisitos': "No disponible",
-                'justificacion_puesto': "No disponible",
-                'justificacion_afinidad': "No disponible",
-                'justificacion_semantica': "No disponible",
-                'justificacion_juicio': "No disponible"
+                'justificacion_requisitos': "No se relaciona",
+                'justificacion_puesto': "No se relaciona",
+                'justificacion_afinidad': "No se relaciona",
+                'justificacion_semantica': "No se relaciona",
+                'justificacion_juicio': "No se relaciona"
             }
 
         # Agregar los resultados a la práctica
