@@ -103,27 +103,27 @@ def obtener_practicas_recientes_original():
 # ==========================================
 # OPTIMIZACIÓN 6: MODELO MÁS RÁPIDO
 # ==========================================
-def obtener_respuesta_chatgpt(prompt: str, model: str = "gpt-3.5-turbo-instruct"):
-    """Optimización: Usar modelo más rápido por defecto"""
+def obtener_respuesta_chatgpt(prompt: str, model: str = "gpt-3.5-turbo"):
+    """Optimización: Usar el modelo más rápido por defecto"""
     try:
-        # Usar el modelo más rápido por defecto
-        if model == "gpt-3.5-turbo-instruct":
-            response = openai.Completion.create(
-                model=model,
-                prompt=prompt,
-                temperature=0.7,
-                max_tokens=500  # Aumentado para respuestas JSON más complejas
-            )
-            respuesta = response['choices'][0]['text'].strip()
-        else:
-            # Mantener compatibilidad con chat models
+        # Usar el modelo de ChatGPT correcto para 'gpt-3.5-turbo'
+        if model == "gpt-3.5-turbo":
             response = openai.ChatCompletion.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
-                max_tokens=500
+                max_tokens=500  # Aumentado para respuestas más complejas
             )
             respuesta = response['choices'][0]['message']['content'].strip()
+        else:
+            # Mantener compatibilidad con el modelo de completaciones
+            response = openai.Completion.create(
+                model=model,
+                prompt=prompt,
+                temperature=0.7,
+                max_tokens=500
+            )
+            respuesta = response['choices'][0]['text'].strip()
         
         return respuesta
     except Exception as e:
