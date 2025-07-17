@@ -1,2 +1,4 @@
+venv/
 jobs-update-e3e63-firebase-adminsdk-fbsvc-4ff0cc214d.json
 .env
+__pycache__/
