@@ -7,3 +7,12 @@ class Match(BaseModel):
 
 class PromptRequest(BaseModel):
     prompt: str
+
+class Practica(BaseModel):
+    id: str
+    descripcion: str
+    fecha_agregado: object
+    company: str
+    url: str
+    location: str
+    salary: str

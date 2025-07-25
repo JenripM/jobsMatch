@@ -13,8 +13,9 @@ from functools import lru_cache
 import time
 
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# Inicializar el cliente de OpenAI
+client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def manejar_error(error: Exception, mensaje: str = "Ocurrió un error"):
     return JSONResponse(status_code=500, content={"error": mensaje, "details": str(error)})
@@ -42,6 +43,7 @@ def obtener_practicas():
             fecha_agregado = practica_dict['fecha_agregado']
             if isinstance(fecha_agregado, datetime):
                 practica_dict['fecha_agregado'] = fecha_agregado.isoformat()
+        # Agregar el id real del documento de Firestore
         practica_dict['id'] = practica.id
         practicas_data.append(practica_dict)
 
@@ -69,7 +71,9 @@ def obtener_practicas_recientes():
                 fecha_agregado = practica_dict['fecha_agregado']
                 if isinstance(fecha_agregado, datetime):
                     practica_dict['fecha_agregado'] = fecha_agregado.isoformat()
-                    practicas_recientes.append(practica_dict)
+            # Agregar el id real del documento de Firestore
+            practica_dict['id'] = practica.id
+            practicas_recientes.append(practica_dict)
         
         return practicas_recientes
     except Exception as e:
@@ -108,22 +112,22 @@ def obtener_respuesta_chatgpt(prompt: str, model: str = "gpt-3.5-turbo"):
     try:
         # Usar el modelo de ChatGPT correcto para 'gpt-3.5-turbo'
         if model == "gpt-3.5-turbo":
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
                 max_tokens=500  # Aumentado para respuestas más complejas
             )
-            respuesta = response['choices'][0]['message']['content'].strip()
+            respuesta = response.choices[0].message.content.strip()
         else:
             # Mantener compatibilidad con el modelo de completaciones
-            response = openai.Completion.create(
+            response = client.completions.create(
                 model=model,
                 prompt=prompt,
                 temperature=0.7,
                 max_tokens=500
             )
-            respuesta = response['choices'][0]['text'].strip()
+            respuesta = response.choices[0].text.strip()
         
         return respuesta
     except Exception as e:
@@ -216,13 +220,14 @@ CRITERIOS:
         # Limpiar la respuesta en caso de que tenga texto extra no deseado
         respuesta_limpia = respuesta_json.strip()
 
-        # Si la respuesta contiene texto no estructurado antes de un JSON, extraemos solo el JSON
-        if respuesta_limpia.startswith('-'):
-            start_index = respuesta_limpia.find("{")
-            if start_index != -1:
-                respuesta_limpia = respuesta_limpia[start_index:]
-            else:
-                raise ValueError("La respuesta no contiene un JSON válido")
+        # Buscar el primer { y último } para extraer solo el JSON
+        start_index = respuesta_limpia.find("{")
+        end_index = respuesta_limpia.rfind("}")
+        
+        if start_index != -1 and end_index != -1 and end_index > start_index:
+            respuesta_limpia = respuesta_limpia[start_index:end_index + 1]
+        else:
+            raise ValueError("La respuesta no contiene un JSON válido")
 
         # Intentamos asegurar que la respuesta sea un JSON válido
         if respuesta_limpia.startswith("{") and respuesta_limpia.endswith("}"):
@@ -255,48 +260,57 @@ CRITERIOS:
             except json.JSONDecodeError as e:
                 print(f"Error parsing JSON response: {e}")
                 print(f"Raw response: {respuesta_limpia}")
-                # Forzar valores por defecto para los campos numéricos
+                # Calcular valores por defecto basados en similitud de embedding
+                similitud_embedding = practica.get('similitud_embedding', 0)
+                puntaje_base = int(similitud_embedding * 50)  # Convertir a escala 0-50
+                
                 resultado = {
-                    'requisitos_tecnicos': 0,
-                    'similitud_puesto': 0,
-                    'afinidad_sector': 0,
-                    'similitud_semantica': 0,
-                    'juicio_sistema': 0,
-                    'justificacion_requisitos': "Error en la justificación de los requisitos técnicos.",
-                    'justificacion_puesto': "Error en la justificación del puesto.",
-                    'justificacion_afinidad': "Error en la afinidad con el sector.",
-                    'justificacion_semantica': "Error en la similitud semántica.",
-                    'justificacion_juicio': "Error en el juicio del sistema."
+                    'requisitos_tecnicos': max(3, min(8, puntaje_base // 10)),
+                    'similitud_puesto': max(5, min(20, puntaje_base // 3)),
+                    'afinidad_sector': max(2, min(10, puntaje_base // 15)),
+                    'similitud_semantica': max(5, min(20, puntaje_base // 3)),
+                    'juicio_sistema': max(3, min(8, puntaje_base // 10)),
+                    'justificacion_requisitos': f"Análisis basado en similitud de embedding ({similitud_embedding:.2f}). Se requiere análisis manual para evaluación completa.",
+                    'justificacion_puesto': f"Evaluación automática basada en similitud vectorial. Se recomienda revisión manual del perfil.",
+                    'justificacion_afinidad': f"Análisis automático de similitud. Se sugiere evaluación manual del sector.",
+                    'justificacion_semantica': f"Similitud calculada automáticamente. Se requiere análisis semántico manual.",
+                    'justificacion_juicio': f"Puntaje basado en similitud de embedding. Se recomienda evaluación manual completa."
                 }
             except ValueError as e:
                 print(f"Error al convertir los valores: {e}")
-                # Forzar valores por defecto para los campos numéricos
+                # Calcular valores por defecto basados en similitud de embedding
+                similitud_embedding = practica.get('similitud_embedding', 0)
+                puntaje_base = int(similitud_embedding * 50)
+                
                 resultado = {
-                    'requisitos_tecnicos': 0,
-                    'similitud_puesto': 0,
-                    'afinidad_sector': 0,
-                    'similitud_semantica': 0,
-                    'juicio_sistema': 0,
-                    'justificacion_requisitos': "Error al calcular los requisitos técnicos.",
-                    'justificacion_puesto': "Error al calcular la similitud con el puesto.",
-                    'justificacion_afinidad': "Error al calcular la afinidad con el sector.",
-                    'justificacion_semantica': "Error al calcular la similitud semántica.",
-                    'justificacion_juicio': "Error al calcular el juicio final."
+                    'requisitos_tecnicos': max(3, min(8, puntaje_base // 10)),
+                    'similitud_puesto': max(5, min(20, puntaje_base // 3)),
+                    'afinidad_sector': max(2, min(10, puntaje_base // 15)),
+                    'similitud_semantica': max(5, min(20, puntaje_base // 3)),
+                    'juicio_sistema': max(3, min(8, puntaje_base // 10)),
+                    'justificacion_requisitos': f"Análisis automático basado en similitud ({similitud_embedding:.2f}). Error en procesamiento de ChatGPT.",
+                    'justificacion_puesto': f"Evaluación automática. Error en análisis detallado de ChatGPT.",
+                    'justificacion_afinidad': f"Análisis automático. Error en evaluación de sector.",
+                    'justificacion_semantica': f"Similitud automática. Error en análisis semántico.",
+                    'justificacion_juicio': f"Puntaje automático. Error en juicio final de ChatGPT."
                 }
 
         else:
-            # Si no es un JSON válido, asignar valores predeterminados con justificaciones específicas
+            # Si no es un JSON válido, asignar valores basados en similitud de embedding
+            similitud_embedding = practica.get('similitud_embedding', 0)
+            puntaje_base = int(similitud_embedding * 50)
+            
             resultado = {
-                'requisitos_tecnicos': 0,
-                'similitud_puesto': 0,
-                'afinidad_sector': 0,
-                'similitud_semantica': 0,
-                'juicio_sistema': 0,
-                'justificacion_requisitos': "Respuesta inválida o incompleta de ChatGPT.",
-                'justificacion_puesto': "Respuesta inválida o incompleta de ChatGPT.",
-                'justificacion_afinidad': "Respuesta inválida o incompleta de ChatGPT.",
-                'justificacion_semantica': "Respuesta inválida o incompleta de ChatGPT.",
-                'justificacion_juicio': "Respuesta inválida o incompleta de ChatGPT."
+                'requisitos_tecnicos': max(3, min(8, puntaje_base // 10)),
+                'similitud_puesto': max(5, min(20, puntaje_base // 3)),
+                'afinidad_sector': max(2, min(10, puntaje_base // 15)),
+                'similitud_semantica': max(5, min(20, puntaje_base // 3)),
+                'juicio_sistema': max(3, min(8, puntaje_base // 10)),
+                'justificacion_requisitos': f"Análisis automático basado en similitud ({similitud_embedding:.2f}). Respuesta inválida de ChatGPT.",
+                'justificacion_puesto': f"Evaluación automática. Respuesta inválida de ChatGPT.",
+                'justificacion_afinidad': f"Análisis automático. Respuesta inválida de ChatGPT.",
+                'justificacion_semantica': f"Similitud automática. Respuesta inválida de ChatGPT.",
+                'justificacion_juicio': f"Puntaje automático. Respuesta inválida de ChatGPT."
             }
 
         # Agregar los resultados a la práctica
@@ -384,3 +398,47 @@ async def comparar_practicas_con_cv(cv_texto: str, practicas: list, puesto: str)
 async def obtener_similitud_async(prompt: str):
     """Función helper para mantener compatibilidad con código existente"""
     return await asyncio.to_thread(obtener_respuesta_chatgpt, prompt)
+
+
+
+def embeber_practicas_guardadas():
+    """
+    Obtiene todas las prácticas guardadas, genera un embedding para cada una
+    y lo almacena en el campo 'embedding' de la práctica en Firestore.
+    """
+    try:
+        # Solo obtener prácticas de los últimos 5 días
+        practicas_recientes = obtener_practicas_recientes()
+        print(f"🔄 Iniciando embebido de {len(practicas_recientes)} prácticas recientes...")
+        count = 0
+        for practica_dict in practicas_recientes:
+            descripcion = practica_dict.get('descripcion', '')
+            title = practica_dict.get('title', '')
+            company = practica_dict.get('company', '')
+            practica_id = practica_dict.get('id')
+            # Concatenar los campos para el embedding
+            texto_embedding = f"{descripcion}\n{title}\n{company}"
+
+            # No embeber si ya tiene el campo 'embedding' en la colección original
+            if practica_dict.get('embedding') is not None:
+                continue
+
+            try:
+                embedding_response = client.embeddings.create(
+                    input=texto_embedding,
+                    model="text-embedding-ada-002"
+                )
+                embedding = embedding_response.data[0].embedding
+                # Guarda la práctica y su embedding en una colección separada y marca como embebida
+                db.collection('practicas_embeddings').document(practica_id).set({
+                    **practica_dict,
+                    "embedding": embedding
+                })
+                # Marca la práctica original como embebida
+                db.collection('practicas').document(practica_id).update({"embebida": True})
+                count += 1
+            except Exception as e:
+                print(f"Error generando embedding para práctica {practica_id}: {e}")
+        return JSONResponse(content={"mensaje": f"Embeddings generados y guardados en colección 'practicas_embeddings' para {count} prácticas recientes."})
+    except Exception as e:
+        return manejar_error(e, "Error al embeber las prácticas guardadas.")
