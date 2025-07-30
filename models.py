@@ -99,6 +99,7 @@ def obtener_practicas_recientes_original():
 
     return practicas_recientes
 
+
 def obtener_practicas_recientes_analistas():
     fecha_actual = datetime.utcnow().replace(tzinfo=None)
     fecha_limite = fecha_actual - timedelta(days=5)
@@ -120,7 +121,33 @@ def obtener_practicas_recientes_analistas():
                     practicas_recientes.append(practica_dict)
     
     return practicas_recientes  
+
+def clasificar_estudiante_o_egresado(cv_texto: str):
+    """Utiliza GPT-3.5 para analizar el CV y determinar si es de un estudiante o egresado"""
+    prompt = f"""
+    Analiza el siguiente CV y determina si la persona está todavía estudiando en la universidad o si ya se ha graduado, Si se indica fecha de estudio universitario por ejemplo   Estudiante 2020 - 2025,  verificas si es año actual, das por culminado los estudios entonces ya seria un egresado. Si está estudiando, responde 'estudiante'. Si ya se graduó, responde 'egresado'.
     
+    CV:
+    {cv_texto}
+    """
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=100
+        )
+        resultado = response['choices'][0]['message']['content'].strip().lower()
+        if "estudiante" in resultado:
+            return "estudiante"
+        elif "egresado" in resultado:
+            return "egresado"
+        else:
+            return "indeterminado"
+    except Exception as e:
+        return f"Error al clasificar el CV: {e}"
+
 
 # ==========================================
 # OPTIMIZACIÓN 6: MODELO MÁS RÁPIDO

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from schemas import Match, PromptRequest
-from models import obtener_practicas, obtener_practicas_recientes, obtener_respuesta_chatgpt, obtener_texto_pdf_cached, comparar_practicas_con_cv
+from models import obtener_practicas, obtener_practicas_recientes, obtener_respuesta_chatgpt, obtener_texto_pdf_cached, comparar_practicas_con_cv, clasificar_estudiante_o_egresado, obtener_practicas_recientes_analistas
 import time
 
 app = FastAPI()
@@ -36,9 +36,19 @@ async def match_practices(match: Match):
     if "Error" in cv_texto:
         return {"error": cv_texto}  # Si hubo un error en la lectura del PDF
 
-    # OPTIMIZACIÓN 3: Obtener prácticas con query optimizada
-    print("🔍 Obteniendo prácticas recientes...")
-    practicas = obtener_practicas_recientes()
+    # Clasificar si el CV es de un estudiante o egresado
+    print("🔍 Clasificando el CV...")
+    tipo_perfil = clasificar_estudiante_o_egresado(cv_texto)
+    print(f"📊 Perfil clasificado como: {tipo_perfil}")
+
+    # OPTIMIZACIÓN 3: Obtener prácticas según el tipo de perfil
+    if tipo_perfil == "estudiante":
+        practicas = obtener_practicas_recientes()
+    elif tipo_perfil == "egresado":
+        practicas = obtener_practicas_recientes_analistas()
+    else:
+        return {"error": "No se pudo clasificar el perfil del CV."}
+
     print(f"📊 Se encontraron {len(practicas)} prácticas para procesar")
 
     # OPTIMIZACIÓN 1 y 2: Comparar con prompts unificados y procesamiento paralelo
