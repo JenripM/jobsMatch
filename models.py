@@ -99,15 +99,37 @@ def obtener_practicas_recientes_original():
 
     return practicas_recientes
 
+def obtener_practicas_recientes_analistas():
+    fecha_actual = datetime.utcnow().replace(tzinfo=None)
+    fecha_limite = fecha_actual - timedelta(days=5)
+    
+    practicas_ref = db.collection('practicasanalistas')
+    practicas = practicas_ref.stream()
+    
+    practicas_recientes = []
+    
+    for practica in practicas:
+        practica_dict = practica.to_dict()
+        
+        if 'fecha_agregado' in practica_dict:
+            fecha_agregado = practica_dict['fecha_agregado']
+            if isinstance(fecha_agregado, datetime):
+                fecha_agregado = fecha_agregado.replace(tzinfo=None)
+                if fecha_agregado >= fecha_limite:
+                    practica_dict['fecha_agregado'] = fecha_agregado.isoformat()
+                    practicas_recientes.append(practica_dict)
+    
+    return practicas_recientes  
+    
 
 # ==========================================
 # OPTIMIZACIÓN 6: MODELO MÁS RÁPIDO
 # ==========================================
-def obtener_respuesta_chatgpt(prompt: str, model: str = "gpt-3.5-turbo"):
+def obtener_respuesta_chatgpt(prompt: str, model: str = "gpt-3.5-turbo-16k"):
     """Optimización: Usar el modelo más rápido por defecto"""
     try:
         # Usar el modelo de ChatGPT correcto para 'gpt-3.5-turbo'
-        if model == "gpt-3.5-turbo":
+        if model == "gpt-3.5-turbo-16k":
             response = openai.ChatCompletion.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
