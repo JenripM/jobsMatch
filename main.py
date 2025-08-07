@@ -1,12 +1,25 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import StreamingResponse
 from schemas import Match, PromptRequest
-from models import obtener_practicas, obtener_practicas_recientes, obtener_respuesta_chatgpt, cv_to_embedding, obtener_texto_pdf_de_url
+from models import obtener_practicas, obtener_practicas_recientes, obtener_respuesta_chatgpt, obtener_texto_pdf_de_url
 from buscar_practicas_afines import buscar_practicas_afines
 from pydantic import BaseModel
-
+from google.cloud.firestore_v1.vector import Vector
+import json
 import time
+import asyncio
+from typing import AsyncGenerator
+import logging
+
+# Configuración para streaming puro (sin compresión)
+STREAMING_CHUNK_SIZE = 1   # 1 práctica por chunk para máxima velocidad
+STREAMING_ENABLED = True   # Flag para habilitar/deshabilitar streaming
+USE_PURE_STREAMING = True  # Streaming sin compresión para latencia mínima
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Request schema for the new endpoint
 class CVEmbeddingRequest(BaseModel):
@@ -15,10 +28,7 @@ class CVEmbeddingRequest(BaseModel):
 
 app = FastAPI()
 
-# Configuración de compresión (debe ir ANTES de CORS)
-app.add_middleware(GZipMiddleware, minimum_size=1000)
-
-# Configuración de CORS
+# Configuración de CORS (SIN GZipMiddleware para streaming puro)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,26 +37,237 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import gzip
+import json
+from datetime import datetime
+from fastapi import Request, Response
+from fastapi.responses import Response as FastAPIResponse
+from google.cloud.firestore_v1._helpers import DatetimeWithNanoseconds
+
+def custom_json_serializer(obj):
+    """Serializer personalizado para manejar tipos especiales de Firestore"""
+    if isinstance(obj, DatetimeWithNanoseconds):
+        return obj.isoformat()
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+async def generate_ndjson_streaming_practices(practicas: list, timing_stats: dict, content_encoding: str) -> AsyncGenerator[str, None]:
+    """
+    Generador asíncrono que produce prácticas en formato NDJSON streaming.
+    
+    NDJSON STREAMING: Cada práctica se envía como una línea JSON separada.
+    El frontend puede procesar cada línea inmediatamente sin esperar el JSON completo.
+    
+    Args:
+        practicas: Lista de prácticas a enviar
+        timing_stats: Estadísticas de tiempo del procesamiento
+        content_encoding: Encoding usado en la request (para metadata)
+    
+    Yields:
+        str: Líneas NDJSON (una práctica por línea + metadata al final)
+    """
+    logger.info(f"🚀 Iniciando NDJSON streaming de {len(practicas)} prácticas")
+    logger.info(f"📝 Formato: Una línea JSON por práctica")
+    
+    try:
+        # Procesar prácticas individualmente como líneas NDJSON
+        total_practicas = len(practicas)
+        
+        for practica_index, practica in enumerate(practicas):
+            logger.info(f"📦 Enviando práctica {practica_index + 1}/{total_practicas}")
+            
+            # Serializar práctica individual como línea JSON
+            practica_json = json.dumps(practica, ensure_ascii=False, default=custom_json_serializer)
+            
+            # Enviar práctica como línea NDJSON (con salto de línea)
+            yield f"{practica_json}\n"
+            
+            # Pausa mínima para permitir procesamiento progresivo
+            await asyncio.sleep(0.05)  # 50ms por práctica
+        
+        # Preparar metadata como última línea NDJSON
+        metadata = {
+            "metadata": {
+                "total_practicas_procesadas": len(practicas),
+                "streaming": True,
+                "format": "ndjson",
+                "compression_used": False,
+                "streaming_type": "ndjson_lines",
+                "timing_stats": timing_stats
+            }
+        }
+        
+        # Enviar metadata como última línea NDJSON
+        metadata_json = json.dumps(metadata, ensure_ascii=False, default=custom_json_serializer)
+        yield f"{metadata_json}\n"
+        
+        logger.info(f"✅ NDJSON streaming completado exitosamente - {len(practicas)} prácticas + metadata enviadas")
+        
+    except Exception as e:
+        logger.error(f"❌ Error durante NDJSON streaming: {e}")
+        # Enviar error como línea NDJSON
+        error_data = {
+            "error": {
+                "message": f"Error durante streaming: {str(e)}",
+                "streaming": True,
+                "format": "ndjson"
+            }
+        }
+        error_json = json.dumps(error_data, ensure_ascii=False, default=custom_json_serializer)
+        yield f"{error_json}\n"
+
 @app.post("/match-practices")
-async def match_practices(match: Match):
+async def match_practices(request: Request):
     """
     Endpoint optimizado para matching de prácticas
     Mejoras implementadas:
-    - Cache de PDF para evitar descargas repetidas
-    - Prompts unificados (8 llamadas → 1 llamada por práctica)
-    - Procesamiento paralelo de todas las prácticas
-    - Query optimizada a Firestore
-    - Modelo más rápido de OpenAI
+    - Soporte para cv_url O cv_embedding como parámetros
+    - Si se pasa cv_embedding, se ejecuta directamente la búsqueda vectorial ( mas rapido )
+    - Si se pasa cv_url, se genera el embedding y luego se procede a hacer la búsqueda vectorial ( mas lento )
+    - Soporte para compresión gzip bidireccional (request y response)
+    - Medición detallada de tiempos por etapa
     """
-    print(f"🔄 Iniciando matching para puesto: {match.puesto}")
-    practicas_con_similitud = await buscar_practicas_afines(match.cv_url, match.puesto)
-    return {
-        "practicas": practicas_con_similitud,
-        "metadata": {
+    # Iniciar medición de tiempo total
+    start_total = time.time()
+    timing_stats = {}
+    
+    try:
+        # 1. ETAPA: Descompresión de request
+        start_decompress = time.time()
+        content_encoding = request.headers.get("content-encoding", "").lower()
+        
+        if content_encoding == "gzip":
+            # Leer datos comprimidos
+            compressed_data = await request.body()
+            print(f"🗜️ Datos comprimidos recibidos: {len(compressed_data)} bytes")
+            
+            # Descomprimir usando gzip
+            decompressed_data = gzip.decompress(compressed_data)
+            raw_data = json.loads(decompressed_data.decode('utf-8'))
+            print(f"📦 Datos descomprimidos: {len(decompressed_data)} bytes")
+            
+        else:
+            # Datos sin comprimir (fallback)
+            raw_data = await request.json()
+            print(f"📄 Datos sin comprimir recibidos")
+        
+        timing_stats['request_decompression'] = time.time() - start_decompress
+        
+        # 2. ETAPA: Procesamiento de datos
+        start_processing = time.time()
+        
+        print(f"🔍 DATOS RAW DEL FRONTEND:")
+        print(f"   - Campos enviados: {list(raw_data.keys())}")
+        
+        # Crear objeto Match manualmente desde los datos descomprimidos
+        match = Match(**raw_data)
+        
+        timing_stats['data_processing'] = time.time() - start_processing
+        
+        print(f"\n🔄 Iniciando matching para puesto: {match.puesto}")
+        print(f"📋 Parámetros PROCESADOS por Pydantic:")
+        print(f"   - cv_url: {match.cv_url}")
+        print(f"   - puesto: {match.puesto}")
+        print(f"   - cv_embedding: {'✅ Presente' if match.cv_embedding else '❌ Ausente'}")
 
-            "total_practicas_procesadas": len(practicas_con_similitud),
-        }
-    }
+        if match.cv_embedding:
+            print(f"   - cv_embedding (primeros 3 valores): {match.cv_embedding[:3]}")
+            print(f"   - cv_embedding (longitud): {len(match.cv_embedding)}")
+        
+        # 3. ETAPA: Búsqueda/Matching
+        start_search = time.time()
+        
+        # Llamar a la función con los parámetros apropiados
+        if match.cv_embedding:
+            print(f"📊 Usando embedding proporcionado directamente")
+            practicas_con_similitud = await buscar_practicas_afines(
+                cv_embedding=match.cv_embedding, 
+                puesto=match.puesto
+            )
+        else:
+            print(f"🔗 Usando URL del CV: {match.cv_url}")
+            practicas_con_similitud = await buscar_practicas_afines(
+                cv_url=match.cv_url, 
+                puesto=match.puesto
+            )
+        
+        timing_stats['search_matching'] = time.time() - start_search
+        
+        # 4. ETAPA: Preparación de respuesta
+        start_response_prep = time.time()
+        
+        # Calcular tiempo total hasta ahora
+        timing_stats['total_processing'] = time.time() - start_total
+        timing_stats['response_preparation'] = time.time() - start_response_prep
+        timing_stats['total_time'] = time.time() - start_total
+        
+        print(f"\n⏱️ ESTADÍSTICAS DE TIEMPO:")
+        print(f"   - Descompresión request: {timing_stats['request_decompression']:.4f}s")
+        print(f"   - Procesamiento datos: {timing_stats['data_processing']:.4f}s")
+        print(f"   - Búsqueda/Matching: {timing_stats['search_matching']:.4f}s")
+        print(f"   - Preparación respuesta: {timing_stats['response_preparation']:.4f}s")
+        print(f"   - 🎆 TIEMPO TOTAL: {timing_stats['total_time']:.4f}s")
+        
+        # Decidir si usar streaming o respuesta tradicional
+        if STREAMING_ENABLED and len(practicas_con_similitud) > 0:
+            print(f"📡 Usando NDJSON STREAMING - {len(practicas_con_similitud)} prácticas (línea por línea)")
+            print(f"📝 Formato: NDJSON para procesamiento inmediato")
+            
+            # Retornar StreamingResponse con NDJSON
+            return StreamingResponse(
+                generate_ndjson_streaming_practices(practicas_con_similitud, timing_stats, content_encoding),
+                media_type="application/x-ndjson",
+                headers={
+                    "Content-Type": "application/x-ndjson",
+                    "Transfer-Encoding": "chunked",
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive"
+                }
+            )
+        else:
+            print(f"📄 Usando respuesta TRADICIONAL - {len(practicas_con_similitud)} prácticas")
+            
+            # Respuesta tradicional (no streaming)
+            response_data = {
+                "practicas": practicas_con_similitud,
+                "metadata": {
+                    "total_practicas_procesadas": len(practicas_con_similitud),
+                    "streaming": False,
+                    "compression_used": content_encoding == "gzip",
+                    "timing_stats": timing_stats
+                }
+            }
+            
+            # Preparar JSON de respuesta con serializer personalizado
+            json_string = json.dumps(response_data, ensure_ascii=False, default=custom_json_serializer)
+            original_size = len(json_string.encode('utf-8'))
+            
+            # Comprimir con gzip
+            compressed_data = gzip.compress(json_string.encode('utf-8'))
+            compressed_size = len(compressed_data)
+            
+            print(f"📤 Enviando respuesta comprimida (gzip):")
+            print(f"   - Tamaño original: {original_size} bytes")
+            print(f"   - Tamaño comprimido: {compressed_size} bytes")
+            print(f"   - Reducción: {round((1 - compressed_size/original_size) * 100)}%")
+            
+            return FastAPIResponse(
+                content=compressed_data,
+                media_type="application/json",
+                headers={
+                    "Content-Encoding": "gzip",
+                    "Content-Type": "application/json"
+                }
+            )
+            
+    except gzip.BadGzipFile:
+        raise HTTPException(status_code=400, detail="Error al descomprimir datos gzip")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Error al parsear JSON")
+    except Exception as e:
+        print(f"❌ Error en match_practices: {e}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
 @app.get("/practicas")
@@ -71,12 +292,15 @@ async def cv_file_url_to_embedding(request: CVEmbeddingRequest):
         request: CVEmbeddingRequest con cv_url y desired_position opcional
     
     Returns:
-        list: Embedding como lista de números, o dict con error
+        dict: JSON con embedding o error
     """
+    print("🚀 POST /cvFileUrl_to_embedding")
+    
+    # Import lazy de cv_to_embedding solo cuando se necesite
+    from models import cv_to_embedding
     embedding = await cv_to_embedding(request.cv_url, request.desired_position)
     
     if embedding is None:
         return {"error": "No se pudo generar el embedding del CV"}
     
-    return embedding
-
+    return {"embedding": Vector(embedding)}

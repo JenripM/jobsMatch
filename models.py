@@ -11,8 +11,8 @@ import json
 from functools import lru_cache
 import time
 import openai
-from services.user_metadata_service import extract_metadata_with_gemini
 from services.embedding_service import get_embedding_from_text
+from google.cloud.firestore_v1.vector import Vector
 
 # =============================
 # CONTADORES DE CONCURRENCIA
@@ -103,7 +103,12 @@ async def cv_to_embedding(cv_url: str, desired_position: str = None):
     Returns:
         list: Embedding como lista de números, o None si hay error
     """
+    print(f"🚀 Generando embedding para CV: {cv_url}")
+
     try:
+        # Import lazy de Gemini solo cuando se necesite
+        from services.user_metadata_service import extract_metadata_with_gemini
+        
         # 1. Extracción de texto del PDF
         cv_texto = obtener_texto_pdf_de_url(cv_url)
         
@@ -127,11 +132,13 @@ async def cv_to_embedding(cv_url: str, desired_position: str = None):
         metadata_string = json.dumps(metadata_with_position, ensure_ascii=False, indent=2)
         
         # 4. Generación de embedding
-        embedding_vector = get_embedding_from_text(metadata_string)
+        print(f"🚀 Generando embedding para metadata: {metadata_string}")
+        embedding_vector = Vector(get_embedding_from_text(metadata_string))
         
         if not embedding_vector:
             return None
-        
+        print(f"🚀 Embedding generado y devuelto con éxito")
+        print(f"🚀 Dimensiones del embedding: {len(embedding_vector)}")        
         return embedding_vector
         
     except Exception as e:
