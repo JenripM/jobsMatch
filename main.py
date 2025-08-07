@@ -1,10 +1,22 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from schemas import Match, PromptRequest
-from models import obtener_practicas, obtener_practicas_recientes, obtener_respuesta_chatgpt, obtener_texto_pdf_cached, comparar_practicas_con_cv, clasificar_estudiante_o_egresado, obtener_practicas_recientes_analistas
+from models import obtener_practicas, obtener_practicas_recientes, obtener_respuesta_chatgpt, cv_to_embedding, obtener_texto_pdf_de_url
+from buscar_practicas_afines import buscar_practicas_afines
+from pydantic import BaseModel
+
 import time
 
+# Request schema for the new endpoint
+class CVEmbeddingRequest(BaseModel):
+    cv_url: str
+    desired_position: str = None
+
 app = FastAPI()
+
+# Configuración de compresión (debe ir ANTES de CORS)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Configuración de CORS
 app.add_middleware(
@@ -27,43 +39,12 @@ async def match_practices(match: Match):
     - Modelo más rápido de OpenAI
     """
     print(f"🔄 Iniciando matching para puesto: {match.puesto}")
-    start_time = time.time()
-    
-    # OPTIMIZACIÓN 4: Usar cache para el texto del CV
-    print("📄 Extrayendo texto del CV...")
-    cv_texto = obtener_texto_pdf_cached(match.cv_url)
-
-    if "Error" in cv_texto:
-        return {"error": cv_texto}  # Si hubo un error en la lectura del PDF
-
-    # Clasificar si el CV es de un estudiante o egresado
-    print("🔍 Clasificando el CV...")
-    tipo_perfil = clasificar_estudiante_o_egresado(cv_texto)
-    print(f"📊 Perfil clasificado como: {tipo_perfil}")
-
-    # OPTIMIZACIÓN 3: Obtener prácticas según el tipo de perfil
-    if tipo_perfil == "estudiante":
-        practicas = obtener_practicas_recientes()
-    elif tipo_perfil == "egresado":
-        practicas = obtener_practicas_recientes_analistas()
-    else:
-        return {"error": "No se pudo clasificar el perfil del CV."}
-
-    print(f"📊 Se encontraron {len(practicas)} prácticas para procesar")
-
-    # OPTIMIZACIÓN 1 y 2: Comparar con prompts unificados y procesamiento paralelo
-    practicas_con_similitud = await comparar_practicas_con_cv(cv_texto, practicas, match.puesto)
-
-    end_time = time.time()
-    tiempo_total = end_time - start_time
-    print(f"✅ Matching completado en {tiempo_total:.2f} segundos")
-    
+    practicas_con_similitud = await buscar_practicas_afines(match.cv_url, match.puesto)
     return {
         "practicas": practicas_con_similitud,
         "metadata": {
-            "tiempo_procesamiento_segundos": round(tiempo_total, 2),
+
             "total_practicas_procesadas": len(practicas_con_similitud),
-            "promedio_por_practica": round(tiempo_total / len(practicas_con_similitud) if practicas_con_similitud else 0, 2)
         }
     }
 
@@ -80,3 +61,22 @@ def get_recent_practicas():
 async def chatgpt_response(request: PromptRequest):
     respuesta = obtener_respuesta_chatgpt(request.prompt)
     return {"respuesta": respuesta}
+
+@app.post("/cvFileUrl_to_embedding")
+async def cv_file_url_to_embedding(request: CVEmbeddingRequest):
+    """
+    Endpoint que genera embedding de un CV.
+    
+    Args:
+        request: CVEmbeddingRequest con cv_url y desired_position opcional
+    
+    Returns:
+        list: Embedding como lista de números, o dict con error
+    """
+    embedding = await cv_to_embedding(request.cv_url, request.desired_position)
+    
+    if embedding is None:
+        return {"error": "No se pudo generar el embedding del CV"}
+    
+    return embedding
+

@@ -1,7 +1,6 @@
 from db import db
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
-import openai
 from dotenv import load_dotenv
 import os
 import requests
@@ -11,29 +10,27 @@ import asyncio
 import json
 from functools import lru_cache
 import time
+import openai
+from services.user_metadata_service import extract_metadata_with_gemini
+from services.embedding_service import get_embedding_from_text
+
+# =============================
+# CONTADORES DE CONCURRENCIA
+# =============================
+concurrent_tasks = 0
+max_concurrent_tasks = 0
+concurrent_tasks_lock = asyncio.Lock()
 
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+
 
 
 def manejar_error(error: Exception, mensaje: str = "Ocurrió un error"):
     return JSONResponse(status_code=500, content={"error": mensaje, "details": str(error)})
 
 
-# ==========================================
-# OPTIMIZACIÓN 4: CACHE PARA TEXTO DE PDF
-# ==========================================
-@lru_cache(maxsize=100)
-def obtener_texto_pdf_cached(cv_url: str):
-    """Cache del texto extraído del PDF para evitar descargas repetidas"""
-    return obtener_texto_pdf_de_url(cv_url)
-
-
-# ==========================================
-# FUNCIONES BÁSICAS (SIN CAMBIOS)
-# ==========================================
 def obtener_practicas():
-    practicas_ref = db.collection('practicas')
+    practicas_ref = db.collection('practicas_embeddings_test')
     practicas = practicas_ref.stream()
     practicas_data = []
     for practica in practicas:
@@ -48,9 +45,6 @@ def obtener_practicas():
     return JSONResponse(content=practicas_data)
 
 
-# ==========================================
-# OPTIMIZACIÓN 3: QUERY FIRESTORE OPTIMIZADA
-# ==========================================
 def obtener_practicas_recientes():
     """Optimización: Filtrar directamente en Firestore en lugar de en memoria"""
     fecha_actual = datetime.utcnow().replace(tzinfo=None)
@@ -59,7 +53,7 @@ def obtener_practicas_recientes():
     # ANTES: Traía todas las prácticas y filtraba en memoria
     # AHORA: Filtra directamente en la query de Firestore
     try:
-        practicas_ref = db.collection('practicas').where('fecha_agregado', '>=', fecha_limite)
+        practicas_ref = db.collection('practicas_embeddings_test').where('fecha_agregado', '>=', fecha_limite)
         practicas = practicas_ref.stream()
         
         practicas_recientes = []
@@ -78,80 +72,74 @@ def obtener_practicas_recientes():
         return obtener_practicas_recientes_original()
 
 
-def obtener_practicas_recientes_original():
-    """Método original como fallback"""
-    fecha_actual = datetime.utcnow().replace(tzinfo=None)
-    fecha_limite = fecha_actual - timedelta(days=5)
-
-    practicas_ref = db.collection('practicas')
-    practicas = practicas_ref.stream()
-
-    practicas_recientes = []
-    for practica in practicas:
-        practica_dict = practica.to_dict()
-        if 'fecha_agregado' in practica_dict:
-            fecha_agregado = practica_dict['fecha_agregado']
-            if isinstance(fecha_agregado, datetime):
-                fecha_agregado = fecha_agregado.replace(tzinfo=None)
-                if fecha_agregado >= fecha_limite:
-                    practica_dict['fecha_agregado'] = fecha_agregado.isoformat()
-                    practicas_recientes.append(practica_dict)
-
-    return practicas_recientes
-
-
-def obtener_practicas_recientes_analistas():
-    fecha_actual = datetime.utcnow().replace(tzinfo=None)
-    fecha_limite = fecha_actual - timedelta(days=5)
     
-    practicas_ref = db.collection('practicasanalistas')
-    practicas = practicas_ref.stream()
-    
-    practicas_recientes = []
-    
-    for practica in practicas:
-        practica_dict = practica.to_dict()
-        
-        if 'fecha_agregado' in practica_dict:
-            fecha_agregado = practica_dict['fecha_agregado']
-            if isinstance(fecha_agregado, datetime):
-                fecha_agregado = fecha_agregado.replace(tzinfo=None)
-                if fecha_agregado >= fecha_limite:
-                    practica_dict['fecha_agregado'] = fecha_agregado.isoformat()
-                    practicas_recientes.append(practica_dict)
-    
-    return practicas_recientes  
-
-def clasificar_estudiante_o_egresado(cv_texto: str):
-    """Utiliza GPT-3.5 para analizar el CV y determinar si es de un estudiante o egresado"""
-    prompt = f"""
-    Analiza el siguiente CV y determina si la persona está todavía estudiando en la universidad o si ya se ha graduado, Si se indica fecha de estudio universitario por ejemplo   Estudiante 2020 - 2025,  verificas si es año actual, das por culminado los estudios entonces ya seria un egresado. Si está estudiando, responde 'estudiante'. Si ya se graduó, responde 'egresado'.
-    
-    CV:
-    {cv_texto}
-    """
-
+def obtener_texto_pdf_de_url(cv_url: str):
+    """Función original para extraer texto de PDF"""
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=100
-        )
-        resultado = response['choices'][0]['message']['content'].strip().lower()
-        if "estudiante" in resultado:
-            return "estudiante"
-        elif "egresado" in resultado:
-            return "egresado"
-        else:
-            return "indeterminado"
+        response = requests.get(cv_url)
+        if response.status_code != 200:
+            return "Error al descargar el archivo."
+
+        pdf_file = BytesIO(response.content)
+        doc = fitz.open(stream=pdf_file)
+
+        texto = ""
+        for page in doc:
+            texto += page.get_text()
+
+        return texto.strip()
     except Exception as e:
-        return f"Error al clasificar el CV: {e}"
+        return f"Error al leer el PDF: {str(e)}"
 
 
-# ==========================================
-# OPTIMIZACIÓN 6: MODELO MÁS RÁPIDO
-# ==========================================
+async def cv_to_embedding(cv_url: str, desired_position: str = None):
+    """
+    Genera embedding de un CV a partir de su URL.
+    
+    Args:
+        cv_url: URL del archivo PDF del CV
+        desired_position: Puesto deseado (opcional)
+    
+    Returns:
+        list: Embedding como lista de números, o None si hay error
+    """
+    try:
+        # 1. Extracción de texto del PDF
+        cv_texto = obtener_texto_pdf_de_url(cv_url)
+        
+        if "Error" in cv_texto:
+            return None
+        
+        # 2. Generación de metadata
+        metadata = await extract_metadata_with_gemini(
+            description=cv_texto,
+            desired_position=desired_position
+        )
+        
+        if not metadata:
+            return None
+        
+        # 3. Conversión de metadata a string para embedding usando formato JSON original
+        metadata_with_position = {
+            "desired_position": desired_position or "No especificado",
+            **metadata,
+        }
+        metadata_string = json.dumps(metadata_with_position, ensure_ascii=False, indent=2)
+        
+        # 4. Generación de embedding
+        embedding_vector = get_embedding_from_text(metadata_string)
+        
+        if not embedding_vector:
+            return None
+        
+        return embedding_vector
+        
+    except Exception as e:
+        print(f"❌ Error en cv_to_embedding: {e}")
+        return None
+
+
+
 def obtener_respuesta_chatgpt(prompt: str, model: str = "gpt-3.5-turbo-16k"):
     """Optimización: Usar el modelo más rápido por defecto"""
     try:
@@ -179,189 +167,6 @@ def obtener_respuesta_chatgpt(prompt: str, model: str = "gpt-3.5-turbo-16k"):
         return f"Error al obtener respuesta de ChatGPT: {e}"
 
 
-def obtener_texto_pdf_de_url(cv_url: str):
-    """Función original para extraer texto de PDF"""
-    try:
-        response = requests.get(cv_url)
-        if response.status_code != 200:
-            return "Error al descargar el archivo."
-
-        pdf_file = BytesIO(response.content)
-        doc = fitz.open(stream=pdf_file)
-
-        texto = ""
-        for page in doc:
-            texto += page.get_text()
-
-        return texto.strip()
-    except Exception as e:
-        return f"Error al leer el PDF: {str(e)}"
-
-
-# ==========================================
-# OPTIMIZACIÓN 1: PROMPT UNIFICADO DE CHATGPT
-# ==========================================
-# ==========================================
-# FUNCION CON NUEVO CRITERIO DE SIMILITUD
-# ==========================================
-async def procesar_practica_con_prompt_unificado(cv_texto: str, practica: dict, puesto: str):
-    """
-    Optimización: Evaluar la compatibilidad con criterios más detallados.
-    Los criterios ahora están más alineados con la descripción de requisitos.
-    """
-    descripcion = practica['descripcion']
-    title = practica['title']
-    
-    # Prompt unificado con los nuevos criterios de evaluación
-    prompt_unificado = f"""Analiza la compatibilidad entre este CV y esta práctica laboral según los siguientes criterios:
-
-1. Requisitos técnicos (10%): Evalúa si el CV cumple con lo mínimo que pide la empresa. Se consideran cosas como idiomas requeridos, herramientas técnicas y nivel de estudios.
-2. Similitud con el puesto (40%): Evalúa qué tan alineado está el perfil con el puesto solicitado. Mide si el estudiante tiene experiencia o formación relevante, o si el puesto tiene relación con su trayectoria o intereses.
-3. Afinidad con el sector o tipo de empresa (15%): Evalúa si el estudiante tiene vínculo con el sector de la empresa.
-4. Similitud semántica general (25%): Compara todo el contenido del CV con la descripción de la vacante utilizando NLP o embeddings.
-5. Juicio del sistema (10%): Un puntaje de ajuste basado en los criterios anteriores y evalúa si el perfil tiene sentido para esta práctica.
-
-IMPORTANTE: Responde ÚNICAMENTE con un JSON válido con esta estructura exacta (sin texto adicional), SI O SI DEBE SER UN JSON PERFECTO ASI COMO TE DOY EL EJEMPLO, Generame como te di en el ejemplo, debe ser un json:
-
-{{
-  "requisitos_tecnicos": [número entre 0-10],
-  "similitud_puesto": [número entre 0-40],
-  "afinidad_sector": [número entre 0-15],
-  "similitud_semantica": [número entre 0-25],
-  "juicio_sistema": [número entre 0-10],
-  "justificacion_requisitos": "[justificación de los requisitos técnicos]",
-  "justificacion_puesto": "[justificación de la similitud con el puesto]",
-  "justificacion_afinidad": "[justificación de la afinidad con el sector]",
-  "justificacion_semantica": "[justificación semántica general]",
-  "justificacion_juicio": "[justificación del juicio final del sistema]"
-}}
-
-DATOS PARA ANALIZAR:
-
-CV del candidato:
-{cv_texto}
-
-Descripción de la práctica:
-{descripcion}
-
-Título de la práctica:
-{title}
-
-Puesto solicitado:
-{puesto}
-
-CRITERIOS:
-- requisitos_tecnicos: Cumplimiento de requisitos básicos de la práctica.
-- similitud_puesto: Relación entre el perfil y el puesto solicitado.
-- afinidad_sector: Compatibilidad con el sector o tipo de empresa.
-- similitud_semantica: Coincidencias semánticas entre el CV y la vacante.
-- juicio_sistema: Puntaje de ajuste general.
-"""
-
-    try:
-        # Una sola llamada async a ChatGPT
-        respuesta_json = await asyncio.to_thread(obtener_respuesta_chatgpt, prompt_unificado)
-        
-        # Limpiar la respuesta en caso de que tenga texto extra no deseado
-        respuesta_limpia = respuesta_json.strip()
-
-        # Si la respuesta contiene texto no estructurado antes de un JSON, extraemos solo el JSON
-        if respuesta_limpia.startswith('-'):
-            start_index = respuesta_limpia.find("{")
-            if start_index != -1:
-                respuesta_limpia = respuesta_limpia[start_index:]
-            else:
-                raise ValueError("La respuesta no contiene un JSON válido")
-
-        # Intentamos asegurar que la respuesta sea un JSON válido
-        if respuesta_limpia.startswith("{") and respuesta_limpia.endswith("}"):
-            try:
-                # Intentar parsear la respuesta JSON
-                resultado = json.loads(respuesta_limpia)
-                
-                # Verificar que todos los campos estén presentes en el resultado
-                campos_requeridos = [
-                    'requisitos_tecnicos', 'similitud_puesto', 'afinidad_sector', 
-                    'similitud_semantica', 'juicio_sistema', 'justificacion_requisitos', 
-                    'justificacion_puesto', 'justificacion_afinidad', 'justificacion_semantica',
-                    'justificacion_juicio'
-                ]
-                
-                # Verificar si los campos están vacíos y dar justificación detallada
-                for campo in campos_requeridos:
-                    if campo not in resultado or resultado[campo] in [None, '']:
-                        # Asignar un valor detallado en vez de "No disponible"
-                        print(f"Campo {campo} no presente o vacío en la respuesta")
-                        resultado[campo] = f"Campo '{campo}' no proporcionado por el modelo de ChatGPT."
-
-                # Asegurar que los valores numéricos sean válidos
-                resultado['requisitos_tecnicos'] = max(0, min(10, float(resultado.get('requisitos_tecnicos', 0))))
-                resultado['similitud_puesto'] = max(0, min(40, float(resultado.get('similitud_puesto', 0))))
-                resultado['afinidad_sector'] = max(0, min(15, float(resultado.get('afinidad_sector', 0))))
-                resultado['similitud_semantica'] = max(0, min(25, float(resultado.get('similitud_semantica', 0))))
-                resultado['juicio_sistema'] = max(0, min(10, float(resultado.get('juicio_sistema', 0))))
-
-            except json.JSONDecodeError as e:
-                print(f"Error parsing JSON response: {e}")
-                print(f"Raw response: {respuesta_limpia}")
-                # Forzar valores por defecto para los campos numéricos
-                resultado = {
-                    'requisitos_tecnicos': 0,
-                    'similitud_puesto': 0,
-                    'afinidad_sector': 0,
-                    'similitud_semantica': 0,
-                    'juicio_sistema': 0,
-                    'justificacion_requisitos': "Error en la justificación de los requisitos técnicos.",
-                    'justificacion_puesto': "Error en la justificación del puesto.",
-                    'justificacion_afinidad': "Error en la afinidad con el sector.",
-                    'justificacion_semantica': "Error en la similitud semántica.",
-                    'justificacion_juicio': "Error en el juicio del sistema."
-                }
-            except ValueError as e:
-                print(f"Error al convertir los valores: {e}")
-                # Forzar valores por defecto para los campos numéricos
-                resultado = {
-                    'requisitos_tecnicos': 0,
-                    'similitud_puesto': 0,
-                    'afinidad_sector': 0,
-                    'similitud_semantica': 0,
-                    'juicio_sistema': 0,
-                    'justificacion_requisitos': "Error al calcular los requisitos técnicos.",
-                    'justificacion_puesto': "Error al calcular la similitud con el puesto.",
-                    'justificacion_afinidad': "Error al calcular la afinidad con el sector.",
-                    'justificacion_semantica': "Error al calcular la similitud semántica.",
-                    'justificacion_juicio': "Error al calcular el juicio final."
-                }
-
-        else:
-            # Si no es un JSON válido, asignar valores predeterminados con justificaciones específicas
-            resultado = {
-                'requisitos_tecnicos': 0,
-                'similitud_puesto': 0,
-                'afinidad_sector': 0,
-                'similitud_semantica': 0,
-                'juicio_sistema': 0,
-                'justificacion_requisitos': "Respuesta inválida o incompleta de ChatGPT.",
-                'justificacion_puesto': "Respuesta inválida o incompleta de ChatGPT.",
-                'justificacion_afinidad': "Respuesta inválida o incompleta de ChatGPT.",
-                'justificacion_semantica': "Respuesta inválida o incompleta de ChatGPT.",
-                'justificacion_juicio': "Respuesta inválida o incompleta de ChatGPT."
-            }
-
-        # Agregar los resultados a la práctica
-        practica_con_resultados = practica.copy()
-        practica_con_resultados.update(resultado)
-        
-        return practica_con_resultados
-        
-    except Exception as e:
-        print(f"Error procesando práctica {practica.get('title', 'Unknown')}: {e}")
-        # Retornar un error detallado si ocurre una excepción
-        return {"error": f"Error procesando práctica: {str(e)}"}
-
-# ==========================================
-# OPTIMIZACIÓN 2: PARALELIZACIÓN COMPLETA
-# ==========================================
 async def comparar_practicas_con_cv(cv_texto: str, practicas: list, puesto: str):
     """
     Optimización: Procesar todas las prácticas en paralelo
@@ -427,9 +232,4 @@ async def comparar_practicas_con_cv(cv_texto: str, practicas: list, puesto: str)
     
     return resultados_validos
 
-# ==========================================
-# FUNCIÓN ASYNC HELPER (MANTENER COMPATIBILIDAD)
-# ==========================================
-async def obtener_similitud_async(prompt: str):
-    """Función helper para mantener compatibilidad con código existente"""
-    return await asyncio.to_thread(obtener_respuesta_chatgpt, prompt)
+
