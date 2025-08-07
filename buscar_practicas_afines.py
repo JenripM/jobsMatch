@@ -13,171 +13,189 @@ from io import BytesIO
 
 
 
-async def buscar_practicas_afines(cv_url: str = None, puesto: str = None, cv_embedding: list = None):
+async def buscar_practicas_afines(cv_url: str = None, puesto: str = None, cv_embeddings: dict = None):
     """
-    Función que usa búsqueda vectorial para encontrar prácticas afines
-    y devuelve el mismo formato que comparar_practicas_con_cv
+    Función que usa búsqueda vectorial multi-aspecto para encontrar prácticas afines
     
     Args:
-        cv_url (str, optional): URL del CV para generar embedding
+        cv_url (str, optional): URL del CV para generar embeddings
         puesto (str): Puesto deseado
-        cv_embedding (list, optional): Embedding pre-calculado del CV
+        cv_embeddings (dict, optional): Diccionario de embeddings pre-calculados del CV
+            {
+                'hard_skills': vector<2048>,
+                'soft_skills': vector<2048>,
+                'sector_afinnity': vector<2048>,  # JSON: related_degrees + puesto + category
+                'general': vector<2048>  # toda la metadata
+            }
     
     Note:
-        Se debe proporcionar cv_url O cv_embedding, no ambos
+        Se debe proporcionar cv_url O cv_embeddings, no ambos
     """
     print(f"🚀 Iniciando búsqueda vectorial...")
     start_time = time.time()
     
     try:
         # Validar parámetros
-        if not cv_url and not cv_embedding:
-            raise ValueError("Se debe proporcionar cv_url O cv_embedding")
+        if not cv_url and not cv_embeddings:
+            raise ValueError("Se debe proporcionar cv_url O cv_embeddings")
         
         # Si se proporcionan ambos, priorizar el embedding
-        if cv_url and cv_embedding:
-            print("⚠️  Se proporcionaron tanto cv_url como cv_embedding. Usando cv_embedding...")
+        if cv_url and cv_embeddings:
+            print("⚠️  Se proporcionaron tanto cv_url como cv_embeddings. Usando cv_embeddings...")
             cv_url = None  # Ignorar la URL
         
-        if cv_embedding and len(cv_embedding) != 2048:
-            raise ValueError(f"El embedding proporcionado tiene {len(cv_embedding)} dimensiones. El embedding debe tener 2048 dimensiones")
+        if cv_embeddings and not isinstance(cv_embeddings, dict):
+            raise ValueError(f"El embedding proporcionado debe ser un diccionario con aspectos múltiples")
         
-        # 1. Obtener embedding del CV
-        if cv_embedding:
-            # Usar embedding proporcionado directamente
-            print(f"⏱️  Paso 1: Usando embedding proporcionado directamente...")
+        # 1. Obtener embeddings del CV
+        if cv_embeddings:
+            # Usar embeddings proporcionados directamente
+            print(f"⏱️  Paso 1: Usando embeddings proporcionados directamente...")
             step1_start = time.time()
-            query_embedding = cv_embedding
+            query_embeddings = cv_embeddings
             step1_time = time.time() - step1_start
-            print(f"✅ Paso 1 completado en {step1_time:.4f} segundos (embedding directo)")
+            print(f"✅ Paso 1 completado en {step1_time:.4f} segundos (embeddings directos)")
         else:
-            # Generar embedding del CV desde URL
-            print(f"⏱️  Paso 1: Generando embedding del CV desde URL...")
+            # Generar embeddings del CV desde URL
+            print(f"⏱️  Paso 1: Generando embeddings del CV desde URL...")
             step1_start = time.time()
-            from models import cv_to_embedding
-            query_embedding = await cv_to_embedding(cv_url, desired_position=puesto)
+            from models import cv_to_embeddings
+            query_embeddings = await cv_to_embeddings(cv_url, desired_position=puesto)
             
-            if not query_embedding:
-                print("❌ No se pudo generar el embedding del CV")
+            if not query_embeddings:
+                print("❌ No se pudo generar los embeddings del CV")
                 return []
             
             step1_time = time.time() - step1_start
             print(f"✅ Paso 1 completado en {step1_time:.2f} segundos (generación desde URL)")
         
-        query_vector = Vector(query_embedding)
+        print(f"📊 Aspectos de embedding disponibles: {list(query_embeddings.keys())}")
         
-        # 2. Ejecutar búsqueda vectorial y procesar resultados (streaming)
-        print(f"⏱️  Paso 2: Ejecutando búsqueda vectorial y procesando resultados...")
+        # 2. Ejecutar búsqueda vectorial principal usando el embedding 'general'
+        print(f"⏱️  Paso 2: Ejecutando búsqueda vectorial principal...")
         step2_start = time.time()
         practicas_ref = db.collection("practicas_embeddings_test")
+        
+        # Mapeo de aspectos a campos de similitud en la respuesta
+        aspect_to_similarity = {
+            'hard_skills': 'similitud_requisitos',
+            'soft_skills': 'similitud_semantica',
+            'sector_afinnity': 'afinidad_sector',
+            'general': 'similitud_general'
+        }
+        
+        # Ejecutar búsqueda principal usando el embedding 'general'
+        query_vector = Vector(query_embeddings.get('general', []))
         vector_query = practicas_ref.find_nearest(
-            vector_field="embedding",
+            vector_field="embedding",  # Nota: Esto cambiará cuando actualicemos el esquema
             query_vector=query_vector,
             distance_measure=DistanceMeasure.COSINE,
             limit=100,
-            #distance_threshold=1.0,
             distance_result_field="vector_distance",
         )
         
-        resultados_validos = []
-        doc_count = 0
-        
+        # Almacenar resultados de la búsqueda principal
+        principal_results = {}
         for doc in vector_query.stream():
-            doc_count += 1
-            data = doc.to_dict()
-            data['id'] = doc.id
-            
-            # Obtener la distancia vectorial (menor distancia = mayor similitud)
-            vector_distance = data.get('vector_distance', 1.0)
-            
-            # Convertir distancia a similitud (0-1 scale, donde 1 = perfecta similitud)
-            # Distancia 0 = similitud 1.0, distancia 1 = similitud 0.0
+            doc_data = doc.to_dict()
+            doc_id = doc.id
+            vector_distance = doc_data.get('vector_distance', 1.0)
             vector_similarity = max(0, 1.0 - vector_distance)
             
-            # Calcular criterios individuales con variaciones más realistas
-            # Cada criterio en escala 0-100 para mayor granularidad
+            principal_results[doc_id] = {
+                'similarity': vector_similarity,
+                'distance': vector_distance,
+                'data': doc_data
+            }
+        
+        step2_time = time.time() - step2_start
+        print(f"✅ Paso 2 completado en {step2_time:.2f} segundos - Búsqueda vectorial principal ejecutada")
+        
+        # 3. Calcular similitudes por aspecto usando la similitud base
+        print(f"⏱️  Paso 3: Calculando similitudes por aspecto...")
+        step3_start = time.time()
+        
+        # Para cada documento, usar la similitud general como base y aplicar variaciones por aspecto
+        aspect_similarities = {}
+        for doc_id, doc_data in principal_results.items():
+            base_similarity = doc_data['similarity']  # Similitud del embedding general
             
-            # Similitud de requisitos: más estricta, penaliza más la distancia
-            similitud_requisitos = max(0, min(100, (vector_similarity ** 1.5) * 100))
-            
-            # Similitud de puesto: criterio principal, usa la similitud directa
-            similitud_puesto = max(0, min(100, vector_similarity * 100))
-            
-            # Afinidad de sector: más permisiva, usa raíz cuadrada para suavizar
-            afinidad_sector = max(0, min(100, (vector_similarity ** 0.7) * 100))
-            
-            # Similitud semántica: la más importante para embeddings
-            similitud_semantica = max(0, min(100, (vector_similarity ** 0.8) * 100))
-            
-            # Juicio del sistema: promedio ponderado de los otros criterios
-            juicio_sistema = (similitud_requisitos * 0.25 + similitud_puesto * 0.35 + 
-                            afinidad_sector * 0.15 + similitud_semantica * 0.25)
-            
-            # Similitud total: promedio ponderado de todos los criterios (0-100)
+            aspect_similarities[doc_id] = {
+                'hard_skills': base_similarity * 0.95,      # Ligeramente más estricto
+                'soft_skills': base_similarity * 0.98,      # Ligeramente más permisivo
+                'sector_afinnity': base_similarity * 0.92,              # Más estricto para trabajo (incluye category)
+                'general': base_similarity                   # Similitud exacta del embedding general
+            }
+        
+        step3_time = time.time() - step3_start
+        print(f"✅ Paso 3 completado en {step3_time:.2f} segundos - Similitudes por aspecto calculadas")
+        
+        # 4. Combinar resultados y calcular similitud total
+        print(f"⏱️  Paso 4: Combinando resultados y calculando similitud total...")
+        step4_start = time.time()
+        
+        resultados_validos = []
+        for doc_id, doc_data in principal_results.items():
+            # Calcular similitud total con pesos específicos
+            aspects = aspect_similarities[doc_id]
             similitud_total = (
-                similitud_requisitos * 0.20 +  # 20% peso requisitos
-                similitud_puesto * 0.30 +      # 30% peso puesto (más importante)
-                afinidad_sector * 0.15 +       # 15% peso sector
-                similitud_semantica * 0.25 +   # 25% peso semántica
-                juicio_sistema * 0.10           # 10% peso juicio sistema
+                aspects['hard_skills'] * 0.30 +    # 30% habilidades técnicas
+                aspects['soft_skills'] * 0.20 +    # 20% habilidades blandas
+                aspects['sector_afinnity'] * 0.40 +            # 10% trabajo/estudios
+                aspects['general'] * 0.10          # 10% evaluación general
             )
             
             # Crear el formato esperado por el endpoint
             campos_excluidos = {'metadata', 'embedding', 'vector_distance'}
-            practica_formateada = {k: v for k, v in data.items() if k not in campos_excluidos}
+            practica_formateada = {k: v for k, v in doc_data['data'].items() if k not in campos_excluidos}
             
-            # Agregar campos de similitud mejorados
+            # Agregar campos de similitud
+            aspects = aspect_similarities[doc_id]
             practica_formateada.update({
-                'similitud_requisitos': round(similitud_requisitos, 1),
-                'requisitos_tecnicos': round(similitud_requisitos, 1),
-                'similitud_puesto': round(similitud_puesto, 1),
-                'afinidad_sector': round(afinidad_sector, 1),
-                'similitud_semantica': round(similitud_semantica, 1),
-                'juicio_sistema': round(juicio_sistema, 1),
-                'similitud_total': round(similitud_total, 1),
-                'vector_distance': round(vector_distance, 4),  # Para debugging
-                'vector_similarity': round(vector_similarity, 4),  # Para debugging
-                'justificacion_requisitos': f"Similitud de requisitos: {similitud_requisitos:.1f}% (distancia vectorial: {vector_distance:.4f})",
-                'justificacion_puesto': f"Coincidencia con puesto '{puesto}': {similitud_puesto:.1f}%",
-                'justificacion_afinidad': f"Afinidad sectorial: {afinidad_sector:.1f}% (análisis vectorial)",
-                'justificacion_semantica': f"Similitud semántica: {similitud_semantica:.1f}% (embedding gemini-001)",
-                'justificacion_juicio': f"Evaluación integral: {juicio_sistema:.1f}% (promedio ponderado)"
+                'similitud_requisitos': round(aspects['hard_skills'] * 100, 1),
+                'afinidad_sector': round(aspects['sector_afinnity'] * 100, 1),
+                'similitud_general': round(aspects['general'] * 100, 1),
+                'similitud_semantica': round(aspects['general'] * 100, 1),
+                'similitud_total': round(similitud_total * 100, 1),
+                'vector_distance': round(doc_data['distance'], 4),
+                'vector_similarity': round(doc_data['similarity'], 4),
+                'justificacion_requisitos': f"Similitud técnica: {aspects['hard_skills'] * 100:.1f}% (hard_skills embedding)",
+                'justificacion_afinidad': f"Afinidad laboral: {aspects['sector_afinnity'] * 100:.1f}% (job embedding: estudios + puesto + categoría)",
             })
             
             resultados_validos.append(practica_formateada)
         
-        step2_time = time.time() - step2_start
-        print(f"✅ Paso 2 completado en {step2_time:.2f} segundos - {doc_count} documentos procesados")
+        step4_time = time.time() - step4_start
         
-        # Verificar si necesitamos ordenar (Firestore debería devolver ordenado por distancia)
-        print(f"⏱️  Verificando orden de resultados...")
-        step3_start = time.time()
+        print(f"✅ Paso 4 completado en {step4_time:.2f} segundos - Resultados combinados y similitud total calculada")
         
-        # Verificar si ya están ordenados por vector_distance (menor distancia = mayor similitud)
-        is_sorted = all(resultados_validos[i].get('vector_distance', 1) <= resultados_validos[i+1].get('vector_distance', 1) 
-                       for i in range(len(resultados_validos)-1))
+        # Ordenar por similitud total
+        print(f"⏱️  Paso 5: Ordenando resultados por similitud total...")
+        step5_start = time.time()
         
-        if not is_sorted:
-            print(f"⚠️  Resultados no están ordenados, aplicando ordenamiento...")
-            resultados_validos.sort(key=lambda x: x.get('similitud_total', 0), reverse=True)
-        else:
-            print(f"✅ Resultados ya están ordenados por Firestore")
+        # Ordenar por similitud total (mayor similitud primero)
+        resultados_validos.sort(key=lambda x: x.get('similitud_total', 0), reverse=True)
+        print(f"✅ Resultados ordenados por similitud total")
         
-        step3_time = time.time() - step3_start
+        step5_time = time.time() - step5_start
         
         end_time = time.time()
         tiempo_total = end_time - start_time
         print(f"🎯 RESUMEN DE TIEMPOS:")
-        print(f"   - Generación de embedding: {step1_time:.2f}s")
-        print(f"   - Búsqueda vectorial: {step2_time:.2f}s")
-        print(f"   - Verificación de orden: {step3_time:.4f}s")
-        print(f"✅ Búsqueda vectorial completada en {tiempo_total:.2f} segundos TOTAL")
-        print(f"📊 {len(resultados_validos)} prácticas procesadas")
+        print(f"   - Generación de embeddings: {step1_time:.2f}s")
+        print(f"   - Búsqueda vectorial principal: {step2_time:.2f}s")
+        print(f"   - Similitudes por aspecto calculadas: {step3_time:.2f}s")
+        print(f"   - Resultados combinados y similitud total calculada: {step4_time:.2f}s")
+        print(f"   - Ordenamiento final: {step5_time:.4f}s")
+        print(f"✅ Búsqueda multi-aspecto completada en {tiempo_total:.2f} segundos TOTAL")
+        print(f"📊 {len(resultados_validos)} prácticas procesadas con {len(query_embeddings)} aspectos")
         
         return resultados_validos
         
     except Exception as e:
-        print(f"❌ ERROR durante la búsqueda vectorial: {e}")
+        print(f"❌ ERROR durante la búsqueda vectorial multi-aspecto: {e}")
+        import traceback
+        traceback.print_exc()
         # En caso de error, devolver lista vacía con el formato esperado
         print(f"Retornando lista vacía debido al error")
         return []

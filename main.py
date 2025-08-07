@@ -52,9 +52,9 @@ def custom_json_serializer(obj):
         return obj.isoformat()
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
-async def generate_ndjson_streaming_practices(practicas: list, timing_stats: dict, content_encoding: str) -> AsyncGenerator[str, None]:
+async def generate_ndjson_streaming_practices(practicas: list, timing_stats: dict) -> AsyncGenerator[str, None]:
     """
-    Generador asíncrono que produce prácticas en formato NDJSON streaming.
+    Generador asíncrono que produce prácticas en formato NDJSON streaming puro.
     
     NDJSON STREAMING: Cada práctica se envía como una línea JSON separada.
     El frontend puede procesar cada línea inmediatamente sin esperar el JSON completo.
@@ -62,7 +62,6 @@ async def generate_ndjson_streaming_practices(practicas: list, timing_stats: dic
     Args:
         practicas: Lista de prácticas a enviar
         timing_stats: Estadísticas de tiempo del procesamiento
-        content_encoding: Encoding usado en la request (para metadata)
     
     Yields:
         str: Líneas NDJSON (una práctica por línea + metadata al final)
@@ -91,9 +90,7 @@ async def generate_ndjson_streaming_practices(practicas: list, timing_stats: dic
             "metadata": {
                 "total_practicas_procesadas": len(practicas),
                 "streaming": True,
-                "format": "ndjson",
-                "compression_used": False,
-                "streaming_type": "ndjson_lines",
+                "chunk_size": STREAMING_CHUNK_SIZE,
                 "timing_stats": timing_stats
             }
         }
@@ -122,8 +119,8 @@ async def match_practices(request: Request):
     """
     Endpoint optimizado para matching de prácticas
     Mejoras implementadas:
-    - Soporte para cv_url O cv_embedding como parámetros
-    - Si se pasa cv_embedding, se ejecuta directamente la búsqueda vectorial ( mas rapido )
+    - Soporte para cv_url O cv_embeddings como parámetros
+    - Si se pasa cv_embeddings, se ejecuta directamente la búsqueda vectorial ( mas rapido )
     - Si se pasa cv_url, se genera el embedding y luego se procede a hacer la búsqueda vectorial ( mas lento )
     - Soporte para compresión gzip bidireccional (request y response)
     - Medición detallada de tiempos por etapa
@@ -169,20 +166,22 @@ async def match_practices(request: Request):
         print(f"📋 Parámetros PROCESADOS por Pydantic:")
         print(f"   - cv_url: {match.cv_url}")
         print(f"   - puesto: {match.puesto}")
-        print(f"   - cv_embedding: {'✅ Presente' if match.cv_embedding else '❌ Ausente'}")
+        print(f"   - cv_embeddings: {'✅ Presente' if match.cv_embeddings else '❌ Ausente'}")
 
-        if match.cv_embedding:
-            print(f"   - cv_embedding (primeros 3 valores): {match.cv_embedding[:3]}")
-            print(f"   - cv_embedding (longitud): {len(match.cv_embedding)}")
+        if match.cv_embeddings:
+            print(f"   - cv_embeddings tipo: diccionario multi-aspecto")
+            print(f"   - aspectos disponibles: {list(match.cv_embeddings.keys())}")
+            for aspect, embedding in match.cv_embeddings.items():
+                print(f"   - {aspect}: {len(embedding)} dimensiones")
         
         # 3. ETAPA: Búsqueda/Matching
         start_search = time.time()
         
         # Llamar a la función con los parámetros apropiados
-        if match.cv_embedding:
-            print(f"📊 Usando embedding proporcionado directamente")
+        if match.cv_embeddings:
+            print(f"📊 Usando embeddings multi-aspecto proporcionados directamente")
             practicas_con_similitud = await buscar_practicas_afines(
-                cv_embedding=match.cv_embedding, 
+                cv_embeddings=match.cv_embeddings, 
                 puesto=match.puesto
             )
         else:
@@ -209,60 +208,35 @@ async def match_practices(request: Request):
         print(f"   - Preparación respuesta: {timing_stats['response_preparation']:.4f}s")
         print(f"   - 🎆 TIEMPO TOTAL: {timing_stats['total_time']:.4f}s")
         
-        # Decidir si usar streaming o respuesta tradicional
+        # Usar siempre streaming puro sin compresión
         if STREAMING_ENABLED and len(practicas_con_similitud) > 0:
-            print(f"📡 Usando NDJSON STREAMING - {len(practicas_con_similitud)} prácticas (línea por línea)")
-            print(f"📝 Formato: NDJSON para procesamiento inmediato")
+            print(f"📡 Usando STREAMING PURO - {len(practicas_con_similitud)} prácticas")
             
-            # Retornar StreamingResponse con NDJSON
+            # Retornar StreamingResponse sin compresión
             return StreamingResponse(
-                generate_ndjson_streaming_practices(practicas_con_similitud, timing_stats, content_encoding),
+                generate_ndjson_streaming_practices(practicas_con_similitud, timing_stats),
                 media_type="application/x-ndjson",
                 headers={
                     "Content-Type": "application/x-ndjson",
-                    "Transfer-Encoding": "chunked",
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive"
                 }
             )
         else:
-            print(f"📄 Usando respuesta TRADICIONAL - {len(practicas_con_similitud)} prácticas")
+            print(f"📄 Usando respuesta JSON tradicional - {len(practicas_con_similitud)} prácticas")
             
-            # Respuesta tradicional (no streaming)
+            # Respuesta tradicional sin compresión
             response_data = {
                 "practicas": practicas_con_similitud,
                 "metadata": {
                     "total_practicas_procesadas": len(practicas_con_similitud),
                     "streaming": False,
-                    "compression_used": content_encoding == "gzip",
                     "timing_stats": timing_stats
                 }
             }
             
-            # Preparar JSON de respuesta con serializer personalizado
-            json_string = json.dumps(response_data, ensure_ascii=False, default=custom_json_serializer)
-            original_size = len(json_string.encode('utf-8'))
+            return response_data
             
-            # Comprimir con gzip
-            compressed_data = gzip.compress(json_string.encode('utf-8'))
-            compressed_size = len(compressed_data)
-            
-            print(f"📤 Enviando respuesta comprimida (gzip):")
-            print(f"   - Tamaño original: {original_size} bytes")
-            print(f"   - Tamaño comprimido: {compressed_size} bytes")
-            print(f"   - Reducción: {round((1 - compressed_size/original_size) * 100)}%")
-            
-            return FastAPIResponse(
-                content=compressed_data,
-                media_type="application/json",
-                headers={
-                    "Content-Encoding": "gzip",
-                    "Content-Type": "application/json"
-                }
-            )
-            
-    except gzip.BadGzipFile:
-        raise HTTPException(status_code=400, detail="Error al descomprimir datos gzip")
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Error al parsear JSON")
     except Exception as e:
@@ -286,21 +260,38 @@ async def chatgpt_response(request: PromptRequest):
 @app.post("/cvFileUrl_to_embedding")
 async def cv_file_url_to_embedding(request: CVEmbeddingRequest):
     """
-    Endpoint que genera embedding de un CV.
+    Endpoint que genera embeddings múltiples de un CV.
     
     Args:
         request: CVEmbeddingRequest con cv_url y desired_position opcional
     
     Returns:
-        dict: JSON con embedding o error
+        dict: JSON con embeddings por aspecto o error
+        {
+            'embeddings': {
+                'hard_skills': vector<2048>,
+                'category': vector<2048>,
+                'related_degrees': vector<2048>,
+                'soft_skills': vector<2048>
+            }
+        }
     """
     print("🚀 POST /cvFileUrl_to_embedding")
     
-    # Import lazy de cv_to_embedding solo cuando se necesite
-    from models import cv_to_embedding
-    embedding = await cv_to_embedding(request.cv_url, request.desired_position)
+    # Import lazy de cv_to_embeddings solo cuando se necesite
+    from models import cv_to_embeddings
+    embeddings_dict = await cv_to_embeddings(request.cv_url, request.desired_position)
     
-    if embedding is None:
-        return {"error": "No se pudo generar el embedding del CV"}
+    if embeddings_dict is None:
+        return {"error": "No se pudo generar los embeddings del CV"}
     
-    return {"embedding": Vector(embedding)}
+    # Convertir cada embedding a Vector para la respuesta
+    embeddings_response = {}
+    for aspect_name, embedding in embeddings_dict.items():
+        embeddings_response[aspect_name] = Vector(embedding)
+    
+    return {
+        "embeddings": embeddings_response,
+        "aspects_count": len(embeddings_response),
+        "available_aspects": list(embeddings_response.keys())
+    }

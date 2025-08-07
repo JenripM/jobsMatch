@@ -92,22 +92,30 @@ def obtener_texto_pdf_de_url(cv_url: str):
         return f"Error al leer el PDF: {str(e)}"
 
 
-async def cv_to_embedding(cv_url: str, desired_position: str = None):
+async def cv_to_embeddings(cv_url: str, desired_position: str = None):
     """
-    Genera embedding de un CV a partir de su URL.
+    Genera embeddings múltiples de un CV a partir de su URL.
     
     Args:
         cv_url: URL del archivo PDF del CV
         desired_position: Puesto deseado (opcional)
     
     Returns:
-        list: Embedding como lista de números, o None si hay error
+        dict: Diccionario con embeddings por aspecto, o None si hay error
+        {
+            'hard_skills': vector<2048>,
+            'category': vector<2048>,
+            'soft_skills': vector<2048>,
+            'sector_afinnity': vector<2048>,  # related_degrees + puesto
+            'general': vector<2048>  # toda la metadata (legacy)
+        }
     """
-    print(f"🚀 Generando embedding para CV: {cv_url}")
+    print(f"🚀 Generando embeddings múltiples para CV: {cv_url}")
 
     try:
         # Import lazy de Gemini solo cuando se necesite
         from services.user_metadata_service import extract_metadata_with_gemini
+        import asyncio
         
         # 1. Extracción de texto del PDF
         cv_texto = obtener_texto_pdf_de_url(cv_url)
@@ -124,25 +132,104 @@ async def cv_to_embedding(cv_url: str, desired_position: str = None):
         if not metadata:
             return None
         
-        # 3. Conversión de metadata a string para embedding usando formato JSON original
+        print(f"🚀 Metadata extraída: {metadata}")
+        
+        # 3. Definir los aspectos y sus contenidos
+        aspects = {
+            'hard_skills': metadata.get('hard_skills', []),
+            'soft_skills': metadata.get('soft_skills', []),
+            'sector_afinnity': None,  # Combinará related_degrees + puesto + category como JSON
+            'general': None  # Embedding de toda la metadata (legacy)
+        }
+        
+        # Crear aspecto 'sector_afinnity' como JSON string que incluye related_degrees, puesto y category
+        job_data = {
+            'related_degrees': metadata.get('related_degrees', []),
+            'desired_position': desired_position or '',
+            'category': metadata.get('category', [])
+        }
+        aspects['sector_afinnity'] = json.dumps(job_data, ensure_ascii=False)
+        
+        # Crear embedding 'general' con toda la metadata (formato legacy)
         metadata_with_position = {
             "desired_position": desired_position or "No especificado",
             **metadata,
         }
-        metadata_string = json.dumps(metadata_with_position, ensure_ascii=False, indent=2)
+        general_metadata_string = json.dumps(metadata_with_position, ensure_ascii=False, indent=2)
+        aspects['general'] = general_metadata_string  # Será procesado como string, no lista
         
-        # 4. Generación de embedding
-        print(f"🚀 Generando embedding para metadata: {metadata_string}")
-        embedding_vector = Vector(get_embedding_from_text(metadata_string))
+        # 4. Generar embeddings en paralelo para cada aspecto
+        print(f"🚀 Generando embeddings para {len(aspects)} aspectos...")
         
-        if not embedding_vector:
+        async def generate_aspect_embeddings(aspect_name, aspect_data):
+            """Genera embedding para un aspecto específico"""
+            try:
+                if not aspect_data:
+                    # Si no hay datos, usar un texto por defecto
+                    aspect_text = f"Sin {aspect_name} especificado"
+                else:
+                    # Manejar diferentes tipos de datos
+                    if aspect_name == 'general':
+                        # Para 'general', aspect_data ya es un string JSON
+                        aspect_text = aspect_data
+                    elif isinstance(aspect_data, list):
+                        # Convertir lista a texto legible
+                        aspect_text = ", ".join(str(item) for item in aspect_data)
+                    else:
+                        aspect_text = str(aspect_data)
+                
+                # Mostrar preview más corto para 'general'
+                preview_text = aspect_text[:100] if aspect_name != 'general' else f"JSON metadata ({len(aspect_text)} chars)"
+                print(f"  - {aspect_name}: {preview_text}...")
+                
+                embedding = get_embedding_from_text(aspect_text)
+                
+                if embedding and len(embedding) == 2048:
+                    return aspect_name, embedding
+                else:
+                    print(f"⚠️  Warning: Embedding inválido para {aspect_name}")
+                    return aspect_name, None
+                    
+            except Exception as e:
+                print(f"❌ Error generando embedding para {aspect_name}: {e}")
+                return aspect_name, None
+        
+        # Ejecutar generación de embeddings en paralelo
+        tasks = [generate_aspect_embeddings(name, data) for name, data in aspects.items()]
+        results = await asyncio.gather(*tasks)
+        
+        # 5. Construir diccionario de embeddings
+        embeddings_dict = {}
+        successful_embeddings = 0
+        
+        print("Tipos de embeddings")
+        for aspect_name, embedding in results:
+            "Printear de que tipo es el embedding"
+            print(type(embedding))
+            #convertir a lista
+            print("Convertir a lista")
+            embedding = list(embedding._value)
+            print(type(embedding))
+            if embedding is not None:
+                embeddings_dict[aspect_name] = embedding
+                successful_embeddings += 1
+            else:
+                print(f"⚠️  No se pudo generar embedding para {aspect_name}")
+        
+        if successful_embeddings == 0:
+            print(f"❌ No se pudo generar ningún embedding")
             return None
-        print(f"🚀 Embedding generado y devuelto con éxito")
-        print(f"🚀 Dimensiones del embedding: {len(embedding_vector)}")        
-        return embedding_vector
+        
+        print(f"✅ Embeddings generados exitosamente para {successful_embeddings}/{len(aspects)} aspectos")
+        print(f"🚀 Aspectos procesados: {list(embeddings_dict.keys())}")
+
+        #mostrar por consola el json pero con los embeddings limitados a 5
+
+        
+        return embeddings_dict
         
     except Exception as e:
-        print(f"❌ Error en cv_to_embedding: {e}")
+        print(f"❌ Error en cv_to_embeddings: {e}")
         return None
 
 
