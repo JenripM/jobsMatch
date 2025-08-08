@@ -203,4 +203,3 @@ async def cv_to_embeddings(cv_url: str, desired_position: str | None):
     except Exception as e:
         print(f"❌ Error en cv_to_embeddings: {e}")
         return None
-
