@@ -53,7 +53,7 @@ async def buscar_practicas_afines(cv_url: str | None , puesto: str | None, perce
             print(f"⏱️  Paso 1: Generando embeddings del CV desde URL...")
             step1_start = time.time()
             from models import cv_to_embeddings
-            query_embeddings = await cv_to_embeddings(cv_url, desired_position=puesto)
+            query_embeddings = await cv_to_embeddings(cv_url or "", desired_position=puesto)
             
             if not query_embeddings:
                 print("❌ No se pudo generar los embeddings del CV")
