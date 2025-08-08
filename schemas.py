@@ -5,6 +5,7 @@ class Match(BaseModel):
     cv_url: Optional[str] = None
     cv_embeddings: Optional[Dict[str, List[float]]] = None
     puesto: str
+    limit: int = 100
     
     @validator('cv_embeddings', pre=False, always=True)
     def validate_parameters(cls, cv_embeddings, values):

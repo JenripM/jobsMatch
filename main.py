@@ -182,14 +182,22 @@ async def match_practices(request: Request):
             practicas_con_similitud = await buscar_practicas_afines(
                 cv_url=None,
                 cv_embeddings=match.cv_embeddings, 
-                puesto=match.puesto
+                puesto=match.puesto,
+                #devolver practicas solo mayores a 50%
+                percentage_threshold= 0.5,
+                #solo buscar prácticas recientes (ultimos 5 dias)
+                sinceDays=5,
             )
         else:
             print(f"🔗 Usando URL del CV: {match.cv_url}")
             practicas_con_similitud = await buscar_practicas_afines(
                 cv_url=match.cv_url, 
                 cv_embeddings=None,
-                puesto=match.puesto
+                puesto=match.puesto,
+                #devolver practicas solo mayores a 50%
+                percentage_threshold= 0.5,
+                #solo buscar prácticas recientes (ultimos 5 dias)
+                sinceDays=5,
             )
         
         timing_stats['search_matching'] = time.time() - start_search
@@ -228,9 +236,10 @@ async def match_practices(request: Request):
             
             # Respuesta tradicional sin compresión
             response_data = {
-                "practicas": practicas_con_similitud,
+                "practicas": practicas_con_similitud[:match.limit],
                 "metadata": {
                     "total_practicas_procesadas": len(practicas_con_similitud),
+                    "total_practicas_devueltas": match.limit,
                     "streaming": False,
                     "timing_stats": timing_stats
                 }

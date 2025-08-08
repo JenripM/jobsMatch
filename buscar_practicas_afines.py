@@ -2,15 +2,17 @@ from db import db
 import time
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
+from datetime import datetime, timedelta, timezone
 
 
-async def buscar_practicas_afines(cv_url: str | None , puesto: str | None, cv_embeddings: dict | None):
+async def buscar_practicas_afines(cv_url: str | None , puesto: str | None, percentage_threshold: float = 0.5 ,sinceDays: int = 5, cv_embeddings: dict | None = None):
     """
     Función que usa búsqueda vectorial multi-aspecto para encontrar prácticas afines
     
     Args:
         cv_url (str, optional): URL del CV para generar embeddings
         puesto (str): Puesto deseado
+        percentage_threshold (float): Umbral de porcentaje minimo para devolver una práctica. Solo se devuelven las prácticas con porcentaje mayor o igual al umbral
         cv_embeddings (dict, optional): Diccionario de embeddings pre-calculados del CV
             {
                 'hard_skills': vector<2048>,
@@ -74,7 +76,8 @@ async def buscar_practicas_afines(cv_url: str | None , puesto: str | None, cv_em
             vector_field="embedding",  # Nota: Esto cambiará cuando actualicemos el esquema
             query_vector=query_vector,
             distance_measure=DistanceMeasure.COSINE,
-            limit=100,
+            limit=500,
+        
             distance_result_field="vector_distance",
         )
         
@@ -118,36 +121,114 @@ async def buscar_practicas_afines(cv_url: str | None , puesto: str | None, cv_em
         print(f"⏱️  Paso 4: Combinando resultados y calculando similitud total...")
         step4_start = time.time()
         
-        resultados_validos = []
+        # Primera pasada: recolectar todos los puntajes sin procesar
+        raw_scores = {
+            'hard_skills': [],
+            'soft_skills': [],
+            'sector_afinnity': [],
+            'general': []
+        }
+        practicas_sin_normalizar = []
+        
+        # Recolectar todos los puntajes sin normalizar
         for doc_id, doc_data in principal_results.items():
-            # Calcular similitud total con pesos específicos
             aspects = aspect_similarities[doc_id]
-            similitud_total = (
-                aspects['hard_skills'] * 0.30 +    # 30% habilidades técnicas
-                aspects['soft_skills'] * 0.20 +    # 20% habilidades blandas
-                aspects['sector_afinnity'] * 0.40 +            # 10% trabajo/estudios
-                aspects['general'] * 0.10          # 10% evaluación general
-            )
+            
+            # Almacenar puntajes sin normalizar
+            raw_scores['hard_skills'].append(aspects['hard_skills'] * 100)
+            raw_scores['soft_skills'].append(aspects['soft_skills'] * 100)
+            raw_scores['sector_afinnity'].append(aspects['sector_afinnity'] * 100)
+            raw_scores['general'].append(aspects['general'] * 100)
             
             # Crear el formato esperado por el endpoint
             campos_excluidos = {'metadata', 'embedding', 'vector_distance'}
             practica_formateada = {k: v for k, v in doc_data['data'].items() if k not in campos_excluidos}
             
-            # Agregar campos de similitud
-            aspects = aspect_similarities[doc_id]
-            practica_formateada.update({
-                'similitud_requisitos': round(aspects['hard_skills'] * 100, 1),
-                'afinidad_sector': round(aspects['sector_afinnity'] * 100, 1),
-                'similitud_general': round(aspects['general'] * 100, 1),
-                'similitud_semantica': round(aspects['general'] * 100, 1),
-                'similitud_total': round(similitud_total * 100, 1),
-                'vector_distance': round(doc_data['distance'], 4),
-                'vector_similarity': round(doc_data['similarity'], 4),
-                'justificacion_requisitos': f"Similitud técnica: {aspects['hard_skills'] * 100:.1f}% (hard_skills embedding)",
-                'justificacion_afinidad': f"Afinidad laboral: {aspects['sector_afinnity'] * 100:.1f}% (job embedding: estudios + puesto + categoría)",
+            # Guardar datos de la práctica para el procesamiento posterior
+            practicas_sin_normalizar.append({
+                'data': practica_formateada,
+                'aspects': aspects,
+                'distance': doc_data['distance'],
+                'similarity': doc_data['similarity']
+            })
+        
+        # Función de normalización mejorada
+        def normalize_scores(scores):
+            if not scores or len(scores) == 0:
+                return scores
+                
+            min_original = min(scores)
+            max_original = max(scores)
+
+            print(f"Min original: {min_original}")
+            print(f"Max original: {max_original}")
+            
+            # Si todos los valores son iguales, devolver 5% para todos
+            if max_original - min_original < 1e-6:
+                return [5.0] * len(scores)
+            
+            # Asegurar que el valor máximo se mantenga igual
+            return [
+                5 + (score - min_original) / (max_original - min_original) * (max_original - 5)
+                for score in scores
+            ]
+        
+        # Normalizar todos los puntajes
+        normalized_scores = {}
+        for aspect, scores in raw_scores.items():
+            normalized_scores[aspect] = normalize_scores(scores)
+        
+        # Segunda pasada: calcular similitud total con puntajes normalizados
+        resultados_validos = []
+        for i, practica_data in enumerate(practicas_sin_normalizar):
+            # Obtener puntajes normalizados para esta práctica
+            sim_requisitos = normalized_scores['hard_skills'][i]
+            sim_soft_skills = normalized_scores['soft_skills'][i]
+            sim_sector = normalized_scores['sector_afinnity'][i]
+            sim_general = normalized_scores['general'][i]
+            
+            # Calcular similitud total con pesos específicos usando puntajes normalizados
+            similitud_total = (
+                sim_requisitos * 0.30 +    # 30% habilidades técnicas
+                sim_soft_skills * 0.20 +   # 20% habilidades blandas
+                sim_sector * 0.40 +        # 40% afinidad laboral
+                sim_general * 0.10         # 10% evaluación general
+            )
+
+            #no incluir practicas por debajo del porcentaje_minimo_aceptado
+            if similitud_total < percentage_threshold * 100:
+                continue
+            # Si la fecha de agregado es mayor a hace 5 dias, entonces no agregarla
+            # Convertir a datetime si es un objeto DatetimeWithNanoseconds o string ISO
+            fecha_agregado = practica_data['data']['fecha_agregado']
+            if hasattr(fecha_agregado, 'isoformat'):  # Si es un objeto datetime
+                if fecha_agregado.tzinfo is None:
+                    # Si no tiene timezone, asumir UTC
+                    fecha_agregado = fecha_agregado.replace(tzinfo=timezone.utc)
+            else:  # Si es string, convertir a datetime con timezone
+                fecha_agregado = datetime.fromisoformat(fecha_agregado.replace('Z', '+00:00'))
+                if fecha_agregado.tzinfo is None:
+                    fecha_agregado = fecha_agregado.replace(tzinfo=timezone.utc)
+                
+            if fecha_agregado < (datetime.now(timezone.utc) - timedelta(days=sinceDays)):
+                continue
+            
+            # Actualizar el diccionario con los valores normalizados
+            practica = practica_data['data']
+            practica.update({
+                'similitud_requisitos': round(sim_requisitos, 1),
+                'afinidad_sector': round(sim_sector, 1),
+                'similitud_general': round(sim_general, 1),
+                'similitud_semantica': round(sim_general, 1),  # Mismo que general
+                'similitud_total': round(similitud_total, 1),
+                'vector_distance': round(practica_data['distance'], 4),
+                'vector_similarity': round(practica_data['similarity'], 4),
+                'justificacion_requisitos': f"Similitud técnica: {sim_requisitos:.1f}% (hard_skills embedding)",
+                'justificacion_afinidad': f"Afinidad laboral: {sim_sector:.1f}% (job embedding: estudios + puesto + categoría)",
             })
             
-            resultados_validos.append(practica_formateada)
+            
+            resultados_validos.append(practica)
         
         step4_time = time.time() - step4_start
         
