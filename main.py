@@ -47,39 +47,6 @@ from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 
 
-# Configuración de logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# --- BLOQUE DE DIAGNÓSTICO DE AUTENTICACIÓN ---
-logger.info("--- INICIANDO DIAGNÓSTICO DE AUTENTICACIÓN ---")
-
-# 1. Verificar si la variable de entorno está presente
-gac_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-if gac_path:
-    logger.info(f"✅ GOOGLE_APPLICATION_CREDENTIALS encontrada: {gac_path}")
-    # 2. Verificar si el archivo de credenciales existe
-    if os.path.exists(gac_path):
-        logger.info(f"✅ Archivo de credenciales encontrado en la ruta: {gac_path}")
-        try:
-            with open(gac_path, 'r') as f:
-                creds_content = json.load(f)
-                logger.info("✅ Contenido del archivo JSON de credenciales cargado exitosamente.")
-                if "client_email" in creds_content:
-                    logger.info(f"🔑 Usando la cuenta de servicio: {creds_content['client_email']}")
-                else:
-                    logger.warning("⚠️ El archivo JSON no contiene un 'client_email'.")
-        except json.JSONDecodeError:
-            logger.error(f"❌ Error al parsear el archivo JSON en: {gac_path}. El archivo está corrupto.")
-    else:
-        logger.error(f"❌ Archivo de credenciales NO encontrado en la ruta: {gac_path}")
-else:
-    logger.warning("⚠️ Variable de entorno GOOGLE_APPLICATION_CREDENTIALS no está definida.")
-    logger.warning("⚠️ La autenticación podría fallar si no se usan otros métodos (e.g., gcloud auth).")
-
-
-
-
 
 def custom_json_serializer(obj):
     """Serializer personalizado para manejar tipos especiales de Firestore"""
