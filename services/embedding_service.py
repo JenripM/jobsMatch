@@ -1,6 +1,8 @@
 import json
 import sys
 sys.path.append('..')
+import asyncio
+
 from vertexai.language_models import TextEmbeddingModel, TextEmbeddingInput
 from db import db
 from google.cloud.firestore_v1.vector import Vector
@@ -43,33 +45,31 @@ from typing import List, Union
 
 from vertexai.language_models import TextEmbeddingModel, TextEmbeddingInput
 
-def get_embedding_from_text(text: str) -> Vector | None:
+async def get_embedding_from_text(text: str) -> Vector | None:
     """
-    Genera un embedding para el texto dado con task='SEMANTIC_SIMILARITY'.
+    Genera un embedding para el texto dado con task='SEMANTIC_SIMILARITY' de forma asíncrona.
     Retorna un objeto Vector que puede guardarse directamente en Firestore.
-    Esta versión es sincrónica, como en la documentación oficial.
     """
     if not text or not text.strip():
         print("⚠️ Texto vacío.")
         return None
 
     try:
-        input_data = [TextEmbeddingInput(text, task_type="SEMANTIC_SIMILARITY")]
-
-        embedding_model = TextEmbeddingModel.from_pretrained("gemini-embedding-001")
-        embeddings = embedding_model.get_embeddings(input_data, output_dimensionality=2048)
-
-        if embeddings and len(embeddings) > 0:
-            # Convertir a Vector de Firestore
-            return Vector(embeddings[0].values)
-        else:
-            print("⚠️ No se generó embedding.")
+        def sync_call():
+            """Llamada sincrónica al modelo de embeddings."""
+            input_data = [TextEmbeddingInput(text, task_type="SEMANTIC_SIMILARITY")]
+            embedding_model = TextEmbeddingModel.from_pretrained("gemini-embedding-001")
+            embeddings = embedding_model.get_embeddings(input_data, output_dimensionality=2048)
+            if embeddings and len(embeddings) > 0:
+                return Vector(embeddings[0].values)
             return None
+
+        # Ejecutar en un hilo separado para no bloquear el loop
+        return await asyncio.to_thread(sync_call)
 
     except Exception as e:
         print(f"❌ Error generando embedding: {e}")
         return None
-
 
 def metadata_to_string(metadata: dict) -> str:
     """

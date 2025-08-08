@@ -1,19 +1,10 @@
 from db import db
-from datetime import datetime, timedelta
 import time
-from scipy.spatial.distance import cosine
-from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
-from google.cloud import firestore
-import requests
-import fitz
-from io import BytesIO
 
 
-
-
-async def buscar_practicas_afines(cv_url: str = None, puesto: str = None, cv_embeddings: dict = None):
+async def buscar_practicas_afines(cv_url: str | None , puesto: str | None, cv_embeddings: dict | None):
     """
     Función que usa búsqueda vectorial multi-aspecto para encontrar prácticas afines
     
@@ -75,14 +66,7 @@ async def buscar_practicas_afines(cv_url: str = None, puesto: str = None, cv_emb
         print(f"⏱️  Paso 2: Ejecutando búsqueda vectorial principal...")
         step2_start = time.time()
         practicas_ref = db.collection("practicas_embeddings_test")
-        
-        # Mapeo de aspectos a campos de similitud en la respuesta
-        aspect_to_similarity = {
-            'hard_skills': 'similitud_requisitos',
-            'soft_skills': 'similitud_semantica',
-            'sector_afinnity': 'afinidad_sector',
-            'general': 'similitud_general'
-        }
+    
         
         # Ejecutar búsqueda principal usando el embedding 'general'
         query_vector = Vector(query_embeddings.get('general', []))

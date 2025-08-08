@@ -2,6 +2,8 @@ import asyncio
 from services.job_metadata_service import generate_metadata_for_collection
 from services.embedding_service import generate_embeddings_for_collection
 
+#EJECUTAR UNA VEZ POR SEMANA PARA GENERAR LOS EMBEDDINGS DE LAS NUEVAS OFERTAS LABORALES
+
 # --- Configuración del Pipeline ---
 COLLECTION_NAME = "practicas_embeddings_test"
 OVERWRITE_METADATA = False  # Cambiar a True para sobrescribir metadatos existentes

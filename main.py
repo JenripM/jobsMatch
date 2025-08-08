@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from schemas import Match, PromptRequest
-from models import obtener_practicas, obtener_practicas_recientes, obtener_respuesta_chatgpt, obtener_texto_pdf_de_url
+from models import obtener_practicas, obtener_practicas_recientes
 from buscar_practicas_afines import buscar_practicas_afines
 from pydantic import BaseModel
 from google.cloud.firestore_v1.vector import Vector
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Request schema for the new endpoint
 class CVEmbeddingRequest(BaseModel):
     cv_url: str
-    desired_position: str = None
+    desired_position: str | None
 
 app = FastAPI()
 
@@ -41,8 +41,7 @@ import gzip
 import json
 from datetime import datetime
 from fastapi import Request, Response
-from fastapi.responses import Response as FastAPIResponse
-from google.cloud.firestore_v1._helpers import DatetimeWithNanoseconds
+from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 def custom_json_serializer(obj):
     """Serializer personalizado para manejar tipos especiales de Firestore"""
@@ -181,6 +180,7 @@ async def match_practices(request: Request):
         if match.cv_embeddings:
             print(f"📊 Usando embeddings multi-aspecto proporcionados directamente")
             practicas_con_similitud = await buscar_practicas_afines(
+                cv_url=None,
                 cv_embeddings=match.cv_embeddings, 
                 puesto=match.puesto
             )
@@ -188,6 +188,7 @@ async def match_practices(request: Request):
             print(f"🔗 Usando URL del CV: {match.cv_url}")
             practicas_con_similitud = await buscar_practicas_afines(
                 cv_url=match.cv_url, 
+                cv_embeddings=None,
                 puesto=match.puesto
             )
         
@@ -252,10 +253,14 @@ def get_all_practicas():
 def get_recent_practicas():
     return obtener_practicas_recientes()
 
+
+
 @app.post("/chatgpt")
 async def chatgpt_response(request: PromptRequest):
-    respuesta = obtener_respuesta_chatgpt(request.prompt)
+    respuesta = "SI ESTAS VIENDO ESTO, POR FAVOR NOTIFICANOS. ¿EN QUE REPOSITORIO ESTAS EJECUTANDO EL CÓDIGO QUE NECESITA ESTE ENDPOINT? \n\natt: Hector 07/08/2025"
     return {"respuesta": respuesta}
+
+
 
 @app.post("/cvFileUrl_to_embedding")
 async def cv_file_url_to_embedding(request: CVEmbeddingRequest):
