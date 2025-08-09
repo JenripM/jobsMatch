@@ -19,15 +19,16 @@ if __name__ == "__main__":
     async def run_pipeline():
         try:
             # Paso 1: Generar metadatos
+            """
             print("\n📝 PASO 1: Generando metadatos...")
             await generate_metadata_for_collection(
                 collection_name=COLLECTION_NAME,
                 overwrite_existing=OVERWRITE_METADATA
             )
-            
+            """
             # Paso 2: Generar embeddings
             print("\n🧠 PASO 2: Generando embeddings...")
-            generate_embeddings_for_collection(
+            await generate_embeddings_for_collection(
                 collection_name=COLLECTION_NAME,
                 overwrite_existing=OVERWRITE_EMBEDDINGS
             )

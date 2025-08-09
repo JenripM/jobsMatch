@@ -1,7 +1,9 @@
 import asyncio
 from db import db
 from google.cloud.firestore_v1 import FieldFilter
-
+async def main():
+    await migrate_collections("practicas", "practicas_embeddings_test", "practicante")
+    
 async def migrate_collections(source: str, target: str, job_level: str):
     """
     Migra documentos de una colección fuente a una colección destino,
@@ -87,7 +89,7 @@ async def migrate_collections(source: str, target: str, job_level: str):
 
 # Ejemplo de uso:
 # await migrate_collections("practicasanalistas", "practicas_embeddings_test", "analista")
-# await migrate_collections("practicas", "practicas_embeddings_test", "practicante")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -90,7 +90,7 @@ def metadata_to_string(metadata: dict) -> str:
 
 ### Lógica principal
 
-def generate_embeddings_for_collection(collection_name=None, overwrite_existing=False):
+async def generate_embeddings_for_collection(collection_name=None, overwrite_existing=False):
     """
     Genera embeddings para todas las prácticas y los guarda en la colección de embeddings.
     
@@ -146,7 +146,7 @@ def generate_embeddings_for_collection(collection_name=None, overwrite_existing=
         print(f"📝 Procesando '{doc.id}': {metadata_text[:100]}...")
 
         # Generar embedding del metadata
-        vector = get_embedding_from_text(metadata_text)
+        vector = await get_embedding_from_text(metadata_text)
         if not vector:
             print(f"⚠️ Embedding fallido para '{doc.id}', omitido.")
             continue
@@ -184,4 +184,4 @@ def generate_embeddings_for_collection(collection_name=None, overwrite_existing=
 
 # --- Punto de entrada principal para ejecutar el script ---
 if __name__ == "__main__":
-    generate_embeddings_for_collection(collection_name="practicas_embeddings_test", overwrite_existing=True)
+    asyncio.run(generate_embeddings_for_collection(collection_name="practicas_embeddings_test", overwrite_existing=False))

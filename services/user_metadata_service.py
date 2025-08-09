@@ -140,7 +140,11 @@ async def extract_metadata_with_gemini(desired_position: str | None, description
         
         # Llamar al modelo
         response = await llm.ainvoke(_input.to_string())
-        
+
+        if not response or not response.content:
+            print("⚠️ Respuesta vacía del modelo.")
+            return None
+
         # Parsear la respuesta usando Pydantic
         parsed_metadata = parser.parse(response.content)
         
