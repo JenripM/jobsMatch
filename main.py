@@ -188,8 +188,8 @@ async def match_practices(request: Request):
                 cv_url=None,
                 cv_embeddings=match.cv_embeddings, 
                 puesto=match.puesto,
-                #devolver practicas solo mayores a 40%
-                percentage_threshold= 0.4,
+                #devolver practicas solo mayores a 0%
+                percentage_threshold= 0,
                 #solo buscar prácticas recientes (ultimos 5 dias)
                 sinceDays=5,
             )
@@ -199,8 +199,8 @@ async def match_practices(request: Request):
                 cv_url=match.cv_url, 
                 cv_embeddings=None,
                 puesto=match.puesto,
-                #devolver practicas solo mayores a 40%
-                percentage_threshold= 0.4,
+                #devolver practicas solo mayores a 0%
+                percentage_threshold= 0,
                 #solo buscar prácticas recientes (ultimos 5 dias)
                 sinceDays=5,
             )
