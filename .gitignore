@@ -1,7 +1,7 @@
 .venv/
 venv/
-firebase_jobs_credentials.json
 firebase_users_credentials.json
+firebase_jobs_credentials.json
 .env
 __pycache__/
 *.pyc
