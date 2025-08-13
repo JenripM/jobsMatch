@@ -634,19 +634,27 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
             print(f"   ⏱️ Subida a R2: {r2_time:.4f}s")
             print(f"   🔗 URL del archivo: {file_url}")
 
-        # 2) Generar embeddings desde 'data' como JSON string simple
-        emb_start = time.time()
-        cv_text = json.dumps(cv_data, ensure_ascii=False)
-        embeddings = await generate_cv_embeddings(cv_text)
-        emb_time = time.time() - emb_start
-        timing_stats["embeddings_generation"] = emb_time
-        if not embeddings:
-            raise Exception("No se pudieron generar los embeddings del CV")
-        print(f"   ⏱️ Embeddings generados en {emb_time:.4f}s; aspectos: {list(embeddings.keys())}")
+        # 2) Generar embeddings solo si cv_data no está vacío
+        embeddings = None
+        if cv_data:  # Solo generar embeddings si hay datos
+            emb_start = time.time()
+            cv_text = json.dumps(cv_data, ensure_ascii=False)
+            embeddings = await generate_cv_embeddings(cv_text)
+            emb_time = time.time() - emb_start
+            timing_stats["embeddings_generation"] = emb_time
+            if not embeddings:
+                raise Exception("No se pudieron generar los embeddings del CV")
+            print(f"   ⏱️ Embeddings generados en {emb_time:.4f}s; aspectos: {list(embeddings.keys())}")
+        else:
+            print("   ⏭️ CV data está vacío, saltando generación de embeddings")
 
         # 3) Preparar documento para Firestore: subir tal cual viene y añadir 'embeddings' y 'fileUrl'
         prep_start = time.time()
-        cv_document: Dict[str, Any] = {**cv, "embeddings": embeddings}
+        cv_document: Dict[str, Any] = {**cv}
+        
+        # Solo añadir embeddings si se generaron
+        if embeddings:
+            cv_document["embeddings"] = embeddings
         
         # Remover campos que no deben ir a la base de datos
         cv_document.pop("fileData", None)  # No guardar los bytes en Firestore
