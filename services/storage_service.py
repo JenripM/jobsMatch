@@ -262,6 +262,11 @@ class R2StorageService:
         # Cargar configuración si no está cargada
         self._load_config()
         
+        # Validar entrada
+        if not file_name or not isinstance(file_name, str) or file_name.strip() == "":
+            logger.warning(f'⚠️ Nombre de archivo inválido para eliminar: {file_name}')
+            return False
+        
         try:
             logger.info(f'🗑️ Eliminando archivo de R2: {file_name}')
             
@@ -281,10 +286,12 @@ class R2StorageService:
                 return False  # No es un error, simplemente no existía
             else:
                 logger.error(f'❌ Error al eliminar archivo de R2: {error_code} - {e.response["Error"]["Message"]}')
-                raise Exception(f'Error al eliminar archivo de R2: {e.response["Error"]["Message"]}')
+                # No lanzar excepción, solo loggear el error
+                return False
         except Exception as e:
             logger.error(f'❌ Error inesperado al eliminar archivo: {str(e)}')
-            raise Exception(f'Error al eliminar archivo: {str(e)}')
+            # No lanzar excepción, solo loggear el error
+            return False
     
     def extract_file_name_from_url(self, file_url: str) -> str:
         """
@@ -300,16 +307,25 @@ class R2StorageService:
         self._load_config()
         
         try:
-            # La URL tiene el formato: https://public-url.com/file_name
-            # Necesitamos extraer solo el file_name
-            if not file_url or not self.public_url:
+            # Validar entrada
+            if not file_url or not isinstance(file_url, str) or file_url.strip() == "":
+                logger.warning(f'⚠️ URL de archivo inválida: {file_url}')
                 return ""
             
-            # Remover la URL base para obtener solo el nombre del archivo
+            if not self.public_url:
+                logger.warning(f'⚠️ URL pública no configurada')
+                return ""
+            
+            # La URL tiene el formato: https://public-url.com/file_name
+            # Necesitamos extraer solo el file_name
             if file_url.startswith(self.public_url):
                 file_name = file_url[len(self.public_url):].lstrip('/')
-                logger.info(f'📝 Nombre extraído de URL: {file_name}')
-                return file_name
+                if file_name:  # Verificar que no esté vacío
+                    logger.info(f'📝 Nombre extraído de URL: {file_name}')
+                    return file_name
+                else:
+                    logger.warning(f'⚠️ Nombre de archivo vacío extraído de URL: {file_url}')
+                    return ""
             else:
                 logger.warning(f'⚠️ URL no coincide con la configuración: {file_url}')
                 return ""

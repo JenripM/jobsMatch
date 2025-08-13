@@ -971,12 +971,17 @@ async def delete_cv(cv_id: str) -> Dict[str, Any]:
 
         # Verificar si era el seleccionado del usuario ANTES de eliminar
         relinked_cv_id: Optional[str] = None
+        user_data = {}
+        was_selected_cv = False
+        
         if user_id:
             user_doc_ref = db_users.collection("Users").document(user_id)
             user_snap = user_doc_ref.get()
             if user_snap.exists:
                 user_data = user_snap.to_dict() or {}
-                if user_data.get("cvSelectedId") == cv_id:
+                was_selected_cv = user_data.get("cvSelectedId") == cv_id
+                
+                if was_selected_cv:
                     # Buscar otros CVs ANTES de eliminar el actual
                     other_cvs = db_users.collection("userCVs").where("userId", "==", user_id).get()
                     other_cvs_list = [doc for doc in other_cvs if doc.id != cv_id]  # Excluir el CV que vamos a eliminar
@@ -991,54 +996,72 @@ async def delete_cv(cv_id: str) -> Dict[str, Any]:
 
         # Eliminar archivo de R2 si existe
         file_url = cv_doc.get("fileUrl")
+        file_deleted = False
         if file_url:
             delete_start = time.time()
             print("🗑️ Eliminando archivo de R2...")
             
-            # Extraer nombre del archivo de la URL
-            file_name = r2_storage.extract_file_name_from_url(file_url)
-            if file_name:
-                deleted = await r2_storage.delete_file_from_r2(file_name)
-                if deleted:
-                    print(f"   ✅ Archivo eliminado de R2: {file_name}")
+            try:
+                # Extraer nombre del archivo de la URL
+                file_name = r2_storage.extract_file_name_from_url(file_url)
+                if file_name:
+                    deleted = await r2_storage.delete_file_from_r2(file_name)
+                    if deleted:
+                        print(f"   ✅ Archivo eliminado de R2: {file_name}")
+                        file_deleted = True
+                    else:
+                        print(f"   ℹ️ Archivo no existía en R2: {file_name}")
                 else:
-                    print(f"   ℹ️ Archivo no existía en R2: {file_name}")
-            else:
-                print(f"   ⚠️ No se pudo extraer nombre del archivo: {file_url}")
+                    print(f"   ⚠️ No se pudo extraer nombre del archivo: {file_url}")
+            except Exception as file_error:
+                print(f"   ⚠️ Error al eliminar archivo de R2: {file_error}")
+                # Continuar con la eliminación del CV aunque falle la eliminación del archivo
             
             delete_time = time.time() - delete_start
             print(f"   ⏱️ Eliminación de archivo: {delete_time:.4f}s")
         
         # Borrar el documento
         doc_ref.delete()
-        print("   ✅ CV eliminado")
+        print("   ✅ CV eliminado de la base de datos")
 
         # Actualizar cvSelectedId si era necesario
-        if user_id and user_data.get("cvSelectedId") == cv_id:
-            if relinked_cv_id:
-                user_doc_ref.update({
-                    "cvSelectedId": relinked_cv_id,
-                    "updatedAt": datetime.now(),
-                })
-                print(f"   🔗 'cvSelectedId' reasignado a {relinked_cv_id}")
-            else:
-                user_doc_ref.update({
-                    "cvSelectedId": None,
-                    "updatedAt": datetime.now(),
-                })
-                print("   🔗 'cvSelectedId' limpiado (sin CVs restantes)")
+        if user_id and was_selected_cv:
+            try:
+                if relinked_cv_id:
+                    user_doc_ref.update({
+                        "cvSelectedId": relinked_cv_id,
+                        "updatedAt": datetime.now(),
+                    })
+                    print(f"   🔗 'cvSelectedId' reasignado a {relinked_cv_id}")
+                else:
+                    user_doc_ref.update({
+                        "cvSelectedId": None,
+                        "updatedAt": datetime.now(),
+                    })
+                    print("   🔗 'cvSelectedId' limpiado (sin CVs restantes)")
+            except Exception as update_error:
+                print(f"   ⚠️ Error al actualizar cvSelectedId: {update_error}")
+                # No fallar la operación principal por este error
 
         total_time = time.time() - start_time
         return {
             "success": True,
             "deleted_cv_id": cv_id,
+            "user_id": user_id,
+            "was_selected_cv": was_selected_cv,
             "relinked_cv_selected_id": relinked_cv_id,
+            "file_deleted": file_deleted,
             "duration_seconds": round(total_time, 4),
         }
 
+    except ValueError as e:
+        total_time = time.time() - start_time
+        print(f"❌ Error de validación al eliminar CV después de {total_time:.4f}s: {e}")
+        raise
     except Exception as e:
         total_time = time.time() - start_time
-        print(f"❌ Error al eliminar CV después de {total_time:.4f}s: {e}")
+        print(f"❌ Error inesperado al eliminar CV después de {total_time:.4f}s: {e}")
+        print(f"   Stack trace: {traceback.format_exc()}")
         raise
 
 

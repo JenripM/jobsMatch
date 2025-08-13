@@ -407,12 +407,25 @@ async def delete_user_cv(cv_id: str):
     Elimina un CV por `cv_id`. Si el usuario tenía ese CV como seleccionado,
     se reasigna al más reciente o se limpia el campo si no hay más.
     """
+    print(f"🚀 DELETE /cv/{cv_id}")
+    
     try:
+        if not cv_id or cv_id.strip() == "":
+            raise HTTPException(status_code=400, detail="cv_id es requerido y no puede estar vacío")
+        
         result = await delete_cv_service(cv_id)
-        print(f"🗑️ CV eliminado: {cv_id}")
+        print(f"✅ CV eliminado exitosamente: {cv_id}")
         return result
+        
+    except ValueError as e:
+        print(f"❌ Error de validación en delete_user_cv: {e}")
+        raise HTTPException(status_code=404, detail=f"CV no encontrado: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"❌ Error en delete_user_cv: {e}")
-        raise HTTPException(status_code=500, detail=f"Error al eliminar CV: {str(e)}")
+        print(f"❌ Error inesperado en delete_user_cv: {e}")
+        import traceback
+        print(f"   Stack trace: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error interno al eliminar CV: {str(e)}")
 
 
