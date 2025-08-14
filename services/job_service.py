@@ -356,21 +356,62 @@ async def extract_metadata_with_gemini(title: str | None, description: str | Non
         # Log de la respuesta para debugging
         print(f"🔍 Respuesta del modelo: {response.content[:200]}...")
         
+        # Intentar limpiar la respuesta si tiene caracteres extra
+        cleaned_content = response.content.strip()
+        
+        # Si la respuesta no comienza con {, intentar encontrar el JSON
+        if not cleaned_content.startswith('{'):
+            # Buscar el primer { y el último }
+            start_idx = cleaned_content.find('{')
+            end_idx = cleaned_content.rfind('}')
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                cleaned_content = cleaned_content[start_idx:end_idx + 1]
+                print(f"🔧 Contenido limpiado: {cleaned_content[:200]}...")
+        
         # Parsear la respuesta usando Pydantic
-        parsed_metadata = parser.parse(response.content)
-        
-        # Log de los metadatos parseados
-        print(f"🔍 Metadatos parseados: {parsed_metadata}")
-        
-        # Convertir a diccionario
-        result = parsed_metadata.model_dump()
-        print(f"🔍 Diccionario resultante: {result}")
-        
-        return result
+        try:
+            parsed_metadata = parser.parse(cleaned_content)
+            
+            # Log de los metadatos parseados
+            print(f"🔍 Metadatos parseados: {parsed_metadata}")
+            
+            # Convertir a diccionario
+            result = parsed_metadata.model_dump()
+            print(f"🔍 Diccionario resultante: {result}")
+            
+            return result
+            
+        except Exception as parse_error:
+            print(f"⚠️ Error al parsear con Pydantic: {parse_error}")
+            print("🔄 Intentando parseo manual del JSON...")
+            
+            # Intentar parseo manual del JSON
+            try:
+                import json
+                # Intentar parsear como JSON puro
+                json_data = json.loads(cleaned_content)
+                
+                # Validar que tenga la estructura esperada
+                required_fields = ["category", "hard_skills", "soft_skills", "language_requirements", "related_degrees"]
+                if all(field in json_data for field in required_fields):
+                    print(f"✅ Parseo manual exitoso: {json_data}")
+                    return json_data
+                else:
+                    print(f"❌ JSON no tiene la estructura esperada. Campos encontrados: {list(json_data.keys())}")
+                    return None
+                    
+            except json.JSONDecodeError as json_error:
+                print(f"❌ Error al parsear JSON manualmente: {json_error}")
+                return None
         
     except Exception as e:
         print(f"Error al extraer metadatos con Gemini: {e}")
-        print(f"Respuesta recibida: {response.content if 'response' in locals() else 'No response'}")
+        if 'response' in locals():
+            print(f"Respuesta recibida: {response.content}")
+            print(f"Longitud de la respuesta: {len(response.content)}")
+            print(f"Primeros 500 caracteres: {response.content[:500]}")
+        else:
+            print("Respuesta recibida: No response")
         return None
 
 async def generate_metadata_for_collection(collection_name=None, overwrite_existing=False):

@@ -545,8 +545,8 @@ async def fetch_user_cv(user_id: str) -> Dict[str, Any]:
             
             print(f"Resultados de la query: {len(cv_query) if cv_query else 0}")
             
-                    if not cv_query or len(cv_query) == 0:
-            raise ValueError(f"El usuario {user_id} no tiene ningún CV en la base de datos")
+            if not cv_query or len(cv_query) == 0:
+                raise ValueError(f"El usuario {user_id} no tiene ningún CV en la base de datos")
             
             # Obtener el primer documento de la query
             cv_doc = cv_query[0]

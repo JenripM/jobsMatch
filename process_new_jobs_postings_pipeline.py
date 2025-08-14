@@ -29,18 +29,18 @@ if __name__ == "__main__":
 
             # Paso 2: Generar metadatos
             
-            print("\n📝 PASO 1: Generando metadatos...")
-            await generate_metadata_for_collection(
-                collection_name=COLLECTION_NAME,
-                overwrite_existing=OVERWRITE_METADATA
-            )
+            #print("\n📝 PASO 1: Generando metadatos...")
+            #await generate_metadata_for_collection(
+            #    collection_name=COLLECTION_NAME,
+            #    overwrite_existing=OVERWRITE_METADATA
+            #)
             
             # Paso 3: Generar embeddings
-            #print("\n🧠 PASO 2: Generando embeddings...")
-            #await generate_embeddings_for_collection(
-            #    collection_name=COLLECTION_NAME,
-            #    overwrite_existing=OVERWRITE_EMBEDDINGS
-            #)
+            print("\n🧠 PASO 2: Generando embeddings...")
+            await generate_embeddings_for_collection(
+                collection_name=COLLECTION_NAME,
+                overwrite_existing=OVERWRITE_EMBEDDINGS
+            )
             
             print("\n✅ Pipeline completado exitosamente!")
             
