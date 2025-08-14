@@ -153,6 +153,9 @@ async def match_practices(request: Request):
 
         # Obtener el CV del usuario
         cv_user = await fetch_user_cv(request_data.get("user_id"))
+        
+        if not cv_user:
+            raise HTTPException(status_code=404, detail="No se pudo obtener el CV del usuario. Verifique que el usuario existe y tiene un CV válido.")
 
         if not cv_user.get("embeddings", None):
             # Retrocompatibilidad con versiones antiguas de la web

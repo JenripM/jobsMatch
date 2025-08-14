@@ -526,7 +526,7 @@ async def fetch_user_cv(user_id: str) -> Dict[str, Any]:
         user_doc = db_users.collection("users").document(user_id).get()
         
         if not user_doc.exists:
-            raise ValueError("Usuario no encontrado en la base de datos.")
+            raise ValueError(f"Usuario con ID {user_id} no encontrado en la base de datos.")
 
         # Convertir el documento a diccionario
         user_data = user_doc.to_dict()
@@ -541,12 +541,12 @@ async def fetch_user_cv(user_id: str) -> Dict[str, Any]:
         else:
             # Si el usuario no tiene un cvSelectedId, tomar el CV más reciente
             print("El usuario no cuenta con el campo cvSelectedId. Seleccionando el cv más reciente...")
-            cv_query = db_users.collection("userCVs").where("userId", "==", user_id).order_by("createdAt", direction="desc").limit(1).get()
+            cv_query = db_users.collection("userCVs").where("userId", "==", user_id).order_by("createdAt", direction="DESCENDING").limit(1).get()
             
             print(f"Resultados de la query: {len(cv_query) if cv_query else 0}")
             
-            if not cv_query or len(cv_query) == 0:
-                raise ValueError("CV no encontrado en la base de datos")
+                    if not cv_query or len(cv_query) == 0:
+            raise ValueError(f"El usuario {user_id} no tiene ningún CV en la base de datos")
             
             # Obtener el primer documento de la query
             cv_doc = cv_query[0]
@@ -555,7 +555,7 @@ async def fetch_user_cv(user_id: str) -> Dict[str, Any]:
 
         if not cv_doc.exists:
             print(f"❌ CV con ID {cvSelectedId} no existe en la base de datos")
-            raise ValueError("CV no encontrado en la base de datos")
+            raise ValueError(f"CV con ID {cvSelectedId} no encontrado en la base de datos")
         
         # Convertir el documento a diccionario
         cv = cv_doc.to_dict()
