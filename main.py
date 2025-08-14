@@ -14,6 +14,17 @@ import os
 # Cargar variables de entorno desde .env
 load_dotenv()
 
+# Configuración centralizada
+from config import (
+    STREAMING_CHUNK_SIZE,
+    STREAMING_ENABLED,
+    USE_PURE_STREAMING,
+    DEFAULT_SINCE_DAYS,
+    DEFAULT_PERCENTAGE_THRESHOLD,
+    DEFAULT_PRACTICES_LIMIT,
+    LOG_LEVEL
+)
+
 # Servicios
 from services.job_service import (
     obtener_practicas,
@@ -29,14 +40,14 @@ from services.user_service import (
     delete_cv as delete_cv_service,
     get_cv_by_id,
 )
-
-# Configuración para streaming puro (sin compresión)
-STREAMING_CHUNK_SIZE = 3   # 1 práctica por chunk para máxima velocidad
-STREAMING_ENABLED = True   # Flag para habilitar/deshabilitar streaming
-USE_PURE_STREAMING = True  # Streaming sin compresión para latencia mínima
+from services.cache_service import (
+    get_cached_matches,
+    save_cached_matches,
+    clear_all_caches,
+)
 
 # Configurar logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
@@ -132,6 +143,7 @@ async def match_practices(request: Request):
     """
     Endpoint optimizado para matching de prácticas usando CV seleccionado
     Mejoras implementadas:
+    - Sistema de cache para evitar recalcular matches cuando el CV no ha cambiado
     - Usa cv_selected_id para consultar CV directamente en la base de datos
     - Si el CV tiene embeddings, los usa directamente (más rápido)
     - Si no tiene embeddings, usa el campo data para generar embeddings
@@ -151,12 +163,64 @@ async def match_practices(request: Request):
         print("user_id: ", request_data.get("user_id", None))
         print("limit: ", request_data.get("limit", None))
 
+        user_id = request_data.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id es requerido")
+
         # Obtener el CV del usuario
-        cv_user = await fetch_user_cv(request_data.get("user_id"))
+        cv_user = await fetch_user_cv(user_id)
         
         if not cv_user:
             raise HTTPException(status_code=404, detail="No se pudo obtener el CV del usuario. Verifique que el usuario existe y tiene un CV válido.")
 
+        # Obtener la URL del archivo CV para usar como clave de cache
+        cv_file_url = cv_user.get("fileUrl")
+        if not cv_file_url:
+            print("⚠️ CV no tiene fileUrl, no se puede usar cache")
+            cv_file_url = "no_file_url"
+
+        # Verificar cache antes de procesar
+        cached_matches = await get_cached_matches(user_id, cv_file_url)
+        if cached_matches:
+            print(f"🚀 Devolviendo {len(cached_matches.get('practices', []))} prácticas desde cache")
+            
+            # Calcular tiempos para respuesta desde cache
+            timing_stats['cache_hit'] = True
+            timing_stats['total_time'] = time.time() - start_total
+            
+            # Usar streaming si está habilitado
+            if STREAMING_ENABLED and len(cached_matches.get('practices', [])) > 0:
+                print(f"📡 Usando STREAMING PURO desde cache - {len(cached_matches['practices'])} prácticas")
+                
+                return StreamingResponse(
+                    generate_ndjson_streaming_practices(cached_matches['practices'], timing_stats),
+                    media_type="application/x-ndjson",
+                    headers={
+                        "Content-Type": "application/x-ndjson",
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive"
+                    }
+                )
+            else:
+                print(f"📄 Usando respuesta JSON tradicional desde cache - {len(cached_matches['practices'])} prácticas")
+                
+                limit = request_data.get("limit", DEFAULT_PRACTICES_LIMIT)
+                response_data = {
+                    "practicas": cached_matches['practices'][:limit],
+                    "metadata": {
+                        "total_practicas_procesadas": len(cached_matches['practices']),
+                        "total_practicas_devueltas": min(limit, len(cached_matches['practices'])),
+                        "streaming": False,
+                        "cache_hit": True,
+                        "timing_stats": timing_stats
+                    }
+                }
+                
+                return response_data
+
+        # Si no hay cache, calcular matches
+        print("🔍 No se encontró cache, calculando matches")
+        
         if not cv_user.get("embeddings", None):
             # Retrocompatibilidad con versiones antiguas de la web
             # Este escenario casi nunca deberia ocurrir. Actualmente se maneja la generacion de embeddings desde que se sube el mismo CV. la unica posibilidad de que alguien tenga CVData pero no embeddings es que haya creado su cv previo a la release del dia 15 de agosto de 2025
@@ -178,13 +242,17 @@ async def match_practices(request: Request):
         
         practicas_con_similitud = await buscar_practicas_afines(
             cv_embeddings=cv_user.get("embeddings", None),
-            #devolver practicas solo mayores a 0%
-            percentage_threshold= 0,
-            #solo buscar prácticas recientes (ultimos 5 dias)
-            sinceDays=5,
+            #devolver practicas solo mayores al umbral configurado
+            percentage_threshold=DEFAULT_PERCENTAGE_THRESHOLD,
+            #solo buscar prácticas recientes según configuración
+            sinceDays=DEFAULT_SINCE_DAYS,
         )
         
         timing_stats['search_matching'] = time.time() - start_search
+        
+        # Guardar en cache si se encontraron prácticas
+        if practicas_con_similitud and len(practicas_con_similitud) > 0:
+            await save_cached_matches(user_id, cv_file_url, practicas_con_similitud)
         
         # 4. ETAPA: Preparación de respuesta
         start_response_prep = time.time()
@@ -193,6 +261,7 @@ async def match_practices(request: Request):
         timing_stats['total_processing'] = time.time() - start_total
         timing_stats['response_preparation'] = time.time() - start_response_prep
         timing_stats['total_time'] = time.time() - start_total
+        timing_stats['cache_hit'] = False
         
         print(f"\n⏱️ ESTADÍSTICAS DE TIEMPO:")
         print(f"   - Búsqueda/Matching: {timing_stats['search_matching']:.4f}s")
@@ -217,13 +286,14 @@ async def match_practices(request: Request):
             print(f"📄 Usando respuesta JSON tradicional - {len(practicas_con_similitud)} prácticas")
             
             # Respuesta tradicional sin compresión
-            limit = request_data.get("limit", 100)
+            limit = request_data.get("limit", DEFAULT_PRACTICES_LIMIT)
             response_data = {
                 "practicas": practicas_con_similitud[:limit],
                 "metadata": {
                     "total_practicas_procesadas": len(practicas_con_similitud),
                     "total_practicas_devueltas": min(limit, len(practicas_con_similitud)),
                     "streaming": False,
+                    "cache_hit": False,
                     "timing_stats": timing_stats
                 }
             }
@@ -431,4 +501,21 @@ async def delete_user_cv(cv_id: str):
         print(f"   Stack trace: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error interno al eliminar CV: {str(e)}")
 
+
+@app.post("/clear-all-caches")
+async def clear_all_caches_endpoint():
+    """
+    Endpoint para limpiar todos los caches manualmente.
+    Útil cuando se suben nuevas prácticas y se necesita invalidar todo el cache.
+    """
+    try:
+        total_count = await clear_all_caches()
+        return {
+            "success": True,
+            "message": f"Limpieza completa completada",
+            "total_caches_removed": total_count
+        }
+    except Exception as e:
+        print(f"❌ Error al limpiar todos los caches: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al limpiar caches: {str(e)}")
 

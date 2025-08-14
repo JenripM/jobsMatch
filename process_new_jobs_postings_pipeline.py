@@ -2,6 +2,7 @@ import asyncio
 from services.job_service import generate_metadata_for_collection
 from services.embedding_service import generate_embeddings_for_collection
 from experiments.migrate_collections import migrate_collections
+from services.cache_service import clear_all_caches
 
 
 
@@ -41,6 +42,11 @@ if __name__ == "__main__":
                 collection_name=COLLECTION_NAME,
                 overwrite_existing=OVERWRITE_EMBEDDINGS
             )
+            
+            # Paso 4: Limpiar todos los caches (nuevas prácticas = cache inválido)
+            print("\n🧹 PASO 3: Limpiando caches de matches...")
+            caches_eliminados = await clear_all_caches()
+            print(f"✅ {caches_eliminados} caches eliminados exitosamente")
             
             print("\n✅ Pipeline completado exitosamente!")
             
