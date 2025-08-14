@@ -539,16 +539,16 @@ async def fetch_user_cv(user_id: str) -> Dict[str, Any]:
             cv_doc = db_users.collection("userCVs").document(cvSelectedId).get()
             print(f"CV encontrado: {cv_doc.exists}")
         else:
-            # Si el usuario no tiene un cvSelectedId, tomar el CV más reciente
-            print("El usuario no cuenta con el campo cvSelectedId. Seleccionando el cv más reciente...")
-            cv_query = db_users.collection("userCVs").where("userId", "==", user_id).order_by("createdAt", direction="DESCENDING").limit(1).get()
+            # Si el usuario no tiene un cvSelectedId, tomar cualquier CV disponible
+            print("El usuario no cuenta con el campo cvSelectedId. Seleccionando cualquier CV disponible...")
+            cv_query = db_users.collection("userCVs").where("userId", "==", user_id).get()
             
             print(f"Resultados de la query: {len(cv_query) if cv_query else 0}")
             
             if not cv_query or len(cv_query) == 0:
                 raise ValueError(f"El usuario {user_id} no tiene ningún CV en la base de datos")
             
-            # Obtener el primer documento de la query
+            # Tomar el primer CV disponible (sin ordenar)
             cv_doc = cv_query[0]
             cvSelectedId = cv_doc.id
             print(f"CV seleccionado automáticamente con ID: {cvSelectedId}")
