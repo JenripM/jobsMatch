@@ -232,7 +232,7 @@ async def generate_cv_embeddings(cv_content: str) -> Dict[str, List[float]]:
         aspects = {
             'hard_skills': ", ".join(metadata.get('hard_skills', [])),
             'soft_skills': ", ".join(metadata.get('soft_skills', [])),
-            'industry': json.dumps({
+            'category': json.dumps({
                 'related_degrees': metadata.get('related_degrees', []),
                 'category': metadata.get('category', [])
             }, ensure_ascii=False),

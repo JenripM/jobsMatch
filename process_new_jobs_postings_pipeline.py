@@ -1,7 +1,8 @@
 import asyncio
-from services.job_metadata_service import generate_metadata_for_collection
+from services.job_service import generate_metadata_for_collection
 from services.embedding_service import generate_embeddings_for_collection
 from experiments.migrate_collections import migrate_collections
+
 
 
 #EJECUTAR UNA VEZ POR SEMANA PARA GENERAR LOS EMBEDDINGS DE LAS NUEVAS OFERTAS LABORALES
@@ -23,8 +24,8 @@ if __name__ == "__main__":
         try:
 
             #Paso 1: Migrar colecciones
-            print("\n📝 PASO 0: Migrar colecciones...")
-            await migrate_collections("practicas", "practicas_embeddings_test", "practicante")
+            #print("\n📝 PASO 0: Migrar colecciones...")
+            #await migrate_collections("practicas", "practicas_embeddings_test", "practicante")
 
             # Paso 2: Generar metadatos
             
@@ -35,11 +36,11 @@ if __name__ == "__main__":
             )
             
             # Paso 3: Generar embeddings
-            print("\n🧠 PASO 2: Generando embeddings...")
-            await generate_embeddings_for_collection(
-                collection_name=COLLECTION_NAME,
-                overwrite_existing=OVERWRITE_EMBEDDINGS
-            )
+            #print("\n🧠 PASO 2: Generando embeddings...")
+            #await generate_embeddings_for_collection(
+            #    collection_name=COLLECTION_NAME,
+            #    overwrite_existing=OVERWRITE_EMBEDDINGS
+            #)
             
             print("\n✅ Pipeline completado exitosamente!")
             

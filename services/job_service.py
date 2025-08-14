@@ -353,11 +353,20 @@ async def extract_metadata_with_gemini(title: str | None, description: str | Non
         # Llamar al modelo
         response = await llm.ainvoke(_input.to_string())
         
+        # Log de la respuesta para debugging
+        print(f"🔍 Respuesta del modelo: {response.content[:200]}...")
+        
         # Parsear la respuesta usando Pydantic
         parsed_metadata = parser.parse(response.content)
         
+        # Log de los metadatos parseados
+        print(f"🔍 Metadatos parseados: {parsed_metadata}")
+        
         # Convertir a diccionario
-        return parsed_metadata.model_dump()
+        result = parsed_metadata.model_dump()
+        print(f"🔍 Diccionario resultante: {result}")
+        
+        return result
         
     except Exception as e:
         print(f"Error al extraer metadatos con Gemini: {e}")
