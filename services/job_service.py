@@ -248,12 +248,14 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
             #no incluir practicas por debajo del porcentaje_minimo_aceptado
             if similitud_total < percentage_threshold * 100:
                 continue
-            # Filtro de recencia tolerante: si no hay fecha o no se puede parsear, no filtrar
+            # Filtro de recencia estricto: excluir prácticas sin fecha válida
             fecha_raw = practica_data.get('data', {}).get('fecha_agregado')
             fecha_dt = parse_fecha_agregado(fecha_raw)
-            if fecha_dt is not None:
-                if fecha_dt < (datetime.now(timezone.utc) - timedelta(days=sinceDays)):
-                    continue
+            if fecha_dt is None:
+                # Si no hay fecha o no se puede parsear, excluir la práctica
+                continue
+            if fecha_dt < (datetime.now(timezone.utc) - timedelta(days=sinceDays)):
+                continue
             
             # Actualizar el diccionario con los valores normalizados
             practica = practica_data['data']
