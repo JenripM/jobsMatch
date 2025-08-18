@@ -25,26 +25,26 @@ if __name__ == "__main__":
         try:
 
             #Paso 1: Migrar colecciones
-            #print("\n📝 PASO 0: Migrar colecciones...")
-            #await migrate_collections("practicas", "practicas_embeddings_test", "practicante")
+            print("\n📝 PASO 1: Migrar colecciones...")
+            await migrate_collections("practicas", "practicas_embeddings_test", "practicante")
 
-            # Paso 2: Generar metadatos
+            #Paso 2: Generar metadatos
             
-            #print("\n📝 PASO 1: Generando metadatos...")
-            #await generate_metadata_for_collection(
-            #    collection_name=COLLECTION_NAME,
-            #    overwrite_existing=OVERWRITE_METADATA
-            #)
+            print("\n📝 PASO 2: Generando metadatos...")
+            await generate_metadata_for_collection(
+                collection_name=COLLECTION_NAME,
+                overwrite_existing=OVERWRITE_METADATA
+            )
             
             # Paso 3: Generar embeddings
-            print("\n🧠 PASO 2: Generando embeddings...")
+            print("\n🧠 PASO 3: Generando embeddings...")
             await generate_embeddings_for_collection(
                 collection_name=COLLECTION_NAME,
                 overwrite_existing=OVERWRITE_EMBEDDINGS
             )
             
-            # Paso 4: Limpiar todos los caches (nuevas prácticas = cache inválido)
-            print("\n🧹 PASO 3: Limpiando caches de matches...")
+            # Paso 4: Limpiar todos los caches (nuevas prácticas = cache inválido). Si no se limpia, el usuarios vería menos practicas de las que realmente hay en la base de datos.
+            print("\n🧹 PASO 4: Limpiando caches de matches...")
             caches_eliminados = await clear_all_caches()
             print(f"✅ {caches_eliminados} caches eliminados exitosamente")
             

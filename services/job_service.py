@@ -2,9 +2,12 @@ from fastapi.responses import JSONResponse
 from db import db_jobs
 from datetime import datetime, timedelta
 import time
+import asyncio
+import json
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
 from datetime import datetime, timedelta, timezone
+import re
 
 async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: int = 5, cv_embeddings: dict = None ):
     """
@@ -121,9 +124,15 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
             raw_scores['sector_afinnity'].append(aspects['sector_afinnity'] * 100)
             raw_scores['general'].append(aspects['general'] * 100)
             
-            # Crear el formato esperado por el endpoint
+            # Crear el formato esperado por el endpoint de manera robusta
             campos_excluidos = {'metadata', 'embedding', 'vector_distance'}
-            practica_formateada = {k: v for k, v in doc_data['data'].items() if k not in campos_excluidos}
+            base_data = doc_data.get('data', doc_data)
+            practica_formateada = {k: v for k, v in base_data.items() if k not in campos_excluidos}
+            # Si 'fecha_agregado' no está en data pero sí en el documento raíz, incluirlo
+            if 'fecha_agregado' not in practica_formateada and 'fecha_agregado' in doc_data.get('data', {}):
+                practica_formateada['fecha_agregado'] = doc_data['data']['fecha_agregado']
+            if 'fecha_agregado' not in practica_formateada and 'fecha_agregado' in doc_data:
+                practica_formateada['fecha_agregado'] = doc_data['fecha_agregado']
             
             # Guardar datos de la práctica para el procesamiento posterior
             practicas_sin_normalizar.append({
@@ -159,6 +168,66 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
         for aspect, scores in raw_scores.items():
             normalized_scores[aspect] = normalize_scores(scores)
         
+        # Helper: parseo tolerante de fecha_agregado (ISO, Firestore y formatos en español)
+        def parse_fecha_agregado(fecha_val):
+            if fecha_val is None:
+                return None
+            # Firestore Timestamp u objeto datetime-like
+            if hasattr(fecha_val, 'isoformat'):
+                try:
+                    dt = fecha_val
+                    if getattr(dt, 'tzinfo', None) is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt
+                except Exception:
+                    return None
+            # Cadenas
+            if isinstance(fecha_val, str):
+                s = fecha_val.strip()
+                # Intento 1: ISO 8601 (con o sin 'Z')
+                try:
+                    iso = s.replace('Z', '+00:00')
+                    dt = datetime.fromisoformat(iso)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt
+                except Exception:
+                    pass
+                # Intento 2: Formato español típico: "15 de agosto de 2025, 11:14:27 a.m. UTC-5"
+                try:
+                    pattern = r"^(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóúñÑ]+)\s+de\s+(\d{4}),\s+(\d{1,2}):(\d{2}):(\d{2})\s*(a\.m\.|p\.m\.)?\s*UTC([+-]\d{1,2})$"
+                    m = re.match(pattern, s)
+                    if not m:
+                        return None
+                    day = int(m.group(1))
+                    month_name = m.group(2).lower()
+                    year = int(m.group(3))
+                    hour = int(m.group(4))
+                    minute = int(m.group(5))
+                    second = int(m.group(6))
+                    ampm = m.group(7)
+                    tz_off = int(m.group(8))
+                    meses = {
+                        'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4, 'mayo': 5, 'junio': 6,
+                        'julio': 7, 'agosto': 8, 'septiembre': 9, 'setiembre': 9, 'octubre': 10,
+                        'noviembre': 11, 'diciembre': 12
+                    }
+                    month = meses.get(month_name)
+                    if month is None:
+                        return None
+                    if ampm:
+                        ampm_lower = ampm.lower()
+                        if 'p.m' in ampm_lower and hour < 12:
+                            hour += 12
+                        if 'a.m' in ampm_lower and hour == 12:
+                            hour = 0
+                    tzinfo = timezone(timedelta(hours=tz_off))
+                    dt_local = datetime(year, month, day, hour, minute, second, tzinfo=tzinfo)
+                    return dt_local.astimezone(timezone.utc)
+                except Exception:
+                    return None
+            return None
+
         # Segunda pasada: calcular similitud total con puntajes normalizados
         resultados_validos = []
         for i, practica_data in enumerate(practicas_sin_normalizar):
@@ -179,20 +248,12 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
             #no incluir practicas por debajo del porcentaje_minimo_aceptado
             if similitud_total < percentage_threshold * 100:
                 continue
-            # Si la fecha de agregado es mayor a hace 5 dias, entonces no agregarla
-            # Convertir a datetime si es un objeto DatetimeWithNanoseconds o string ISO
-            fecha_agregado = practica_data['data']['fecha_agregado']
-            if hasattr(fecha_agregado, 'isoformat'):  # Si es un objeto datetime
-                if fecha_agregado.tzinfo is None:
-                    # Si no tiene timezone, asumir UTC
-                    fecha_agregado = fecha_agregado.replace(tzinfo=timezone.utc)
-            else:  # Si es string, convertir a datetime con timezone
-                fecha_agregado = datetime.fromisoformat(fecha_agregado.replace('Z', '+00:00'))
-                if fecha_agregado.tzinfo is None:
-                    fecha_agregado = fecha_agregado.replace(tzinfo=timezone.utc)
-                
-            if fecha_agregado < (datetime.now(timezone.utc) - timedelta(days=sinceDays)):
-                continue
+            # Filtro de recencia tolerante: si no hay fecha o no se puede parsear, no filtrar
+            fecha_raw = practica_data.get('data', {}).get('fecha_agregado')
+            fecha_dt = parse_fecha_agregado(fecha_raw)
+            if fecha_dt is not None:
+                if fecha_dt < (datetime.now(timezone.utc) - timedelta(days=sinceDays)):
+                    continue
             
             # Actualizar el diccionario con los valores normalizados
             practica = practica_data['data']

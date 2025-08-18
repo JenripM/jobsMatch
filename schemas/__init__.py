@@ -5,6 +5,7 @@ Este módulo contiene todos los tipos de datos utilizados en el proyecto:
 - Tipos de CV
 - Tipos de usuario
 - Tipos de metadatos
+- Tipos de pipeline
 """
 
 from .cv_types import (
@@ -21,6 +22,15 @@ from .cv_types import (
     UserMetadata
 )
 
+from .pipeline_types import (
+    JobLevel,
+    MigrationConfig,
+    PipelineSections,
+    PipelineConfig,
+    PipelineStep,
+    PipelineResult
+)
+
 __all__ = [
     "PersonalInfo",
     "Education", 
@@ -32,5 +42,11 @@ __all__ = [
     "Language",
     "Reference",
     "CVData",
-    "UserMetadata"
+    "UserMetadata",
+    "JobLevel",
+    "MigrationConfig",
+    "PipelineSections",
+    "PipelineConfig",
+    "PipelineStep",
+    "PipelineResult"
 ]

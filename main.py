@@ -45,6 +45,8 @@ from services.cache_service import (
     save_cached_matches,
     clear_all_caches,
 )
+from services.pipeline_service import PipelineService
+from schemas.pipeline_types import PipelineConfig, MigrationConfig, PipelineSections
 
 # Configurar logging
 logging.basicConfig(level=getattr(logging, LOG_LEVEL))
@@ -518,4 +520,56 @@ async def clear_all_caches_endpoint():
     except Exception as e:
         print(f"❌ Error al limpiar todos los caches: {e}")
         raise HTTPException(status_code=500, detail=f"Error al limpiar caches: {str(e)}")
+
+
+@app.post("/process-jobs-pipeline")
+async def process_jobs_pipeline(config: PipelineConfig):
+    """
+    Endpoint para ejecutar el pipeline completo de procesamiento de ofertas laborales.
+    
+    Este endpoint reemplaza la ejecución manual del script process_new_jobs_postings_pipeline.py
+    y permite configurar todos los parámetros del pipeline.
+    
+    Args:
+        config: Configuración completa del pipeline incluyendo:
+            - source_collection: Colección fuente de prácticas
+            - target_collection: Colección destino para embeddings
+            - job_level: Nivel de trabajo (practicante, analista, senior, junior)
+            - overwrite_metadata: Si sobrescribir metadatos existentes
+            - overwrite_embeddings: Si sobrescribir embeddings existentes
+            - Rate limiting y configuración de batches
+            - Configuración de cache y logging
+    
+    Returns:
+        PipelineResult: Resultado detallado del pipeline con estadísticas de cada paso
+    """
+    print("🚀 POST /process-jobs-pipeline")
+    print(f"   - Configuración recibida: {config.dict()}")
+    
+    try:
+        # Crear instancia del servicio de pipeline
+        pipeline_service = PipelineService()
+        
+        # Ejecutar el pipeline
+        result = await pipeline_service.run_pipeline(config)
+        
+        if result.success:
+            print(f"✅ Pipeline completado exitosamente en {result.total_duration:.2f}s")
+            print(f"   - Prácticas migradas: {result.summary.get('total_practices_migrated', 0)}")
+            print(f"   - Metadatos generados: {result.summary.get('total_metadata_generated', 0)}")
+            print(f"   - Embeddings generados: {result.summary.get('total_embeddings_generated', 0)}")
+            print(f"   - Caches limpiados: {result.summary.get('caches_cleared', 0)}")
+        else:
+            print(f"❌ Pipeline falló: {result.error_message}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ Error en process_jobs_pipeline: {e}")
+        import traceback
+        print(f"   Stack trace: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error interno del pipeline: {str(e)}")
+
+
+
 
