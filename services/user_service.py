@@ -662,6 +662,39 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
         # Agregar fileUrl si se subió a R2
         if file_url:
             cv_document["fileUrl"] = file_url
+        # Si no hay fileUrl pero hay cv_data, generar PDF automáticamente
+        elif cv_data and not file_url:
+            try:
+                print("   📄 Generando PDF automáticamente desde cvData...")
+                pdf_start = time.time()
+                
+                # Importar el generador de PDF
+                from services.pdf_generator_service import CVPDFGenerator
+                
+                # Generar PDF a partir del cvData
+                pdf_content, pdf_file_name = CVPDFGenerator.generate_pdf_from_cv_data(cv_data)
+                
+                # Subir PDF generado a R2
+                auto_file_url = await r2_storage.upload_file_to_r2(
+                    file_data=pdf_content,
+                    file_name=pdf_file_name,
+                    content_type="application/pdf",
+                    prefix="cv"
+                )
+                
+                # Agregar fileUrl al documento
+                cv_document["fileUrl"] = auto_file_url
+                file_url = auto_file_url  # Actualizar variable para la respuesta
+                
+                pdf_time = time.time() - pdf_start
+                timing_stats["pdf_generation"] = pdf_time
+                print(f"   ⏱️ PDF generado y subido en {pdf_time:.4f}s")
+                print(f"   🔗 URL del PDF generado: {auto_file_url}")
+                
+            except Exception as pdf_error:
+                print(f"   ⚠️ Error generando PDF automático (continuando sin fileUrl): {pdf_error}")
+                # No fallar el proceso completo, continuar sin fileUrl
+                pass
             
         prep_time = time.time() - prep_start
         timing_stats["document_preparation"] = prep_time
