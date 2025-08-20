@@ -25,16 +25,16 @@ if __name__ == "__main__":
         try:
 
             #Paso 1: Migrar colecciones
-            print("\n📝 PASO 1: Migrar colecciones...")
-            await migrate_collections("practicas", "practicas_embeddings_test", "practicante")
+            #print("\n📝 PASO 1: Migrar colecciones...")
+            #await migrate_collections("practicas", "practicas_embeddings_test", "practicante")
 
             #Paso 2: Generar metadatos
             
-            print("\n📝 PASO 2: Generando metadatos...")
-            await generate_metadata_for_collection(
-                collection_name=COLLECTION_NAME,
-                overwrite_existing=OVERWRITE_METADATA
-            )
+            #print("\n📝 PASO 2: Generando metadatos...")
+            #await generate_metadata_for_collection(
+            #    collection_name=COLLECTION_NAME,
+            #    overwrite_existing=OVERWRITE_METADATA
+            #)
             
             # Paso 3: Generar embeddings
             print("\n🧠 PASO 3: Generando embeddings...")

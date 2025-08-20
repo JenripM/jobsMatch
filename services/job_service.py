@@ -20,7 +20,7 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
             {
                 'hard_skills': vector<2048>,
                 'soft_skills': vector<2048>,
-                'sector_afinnity': vector<2048>,  # JSON: related_degrees
+                'category': vector<2048>,  # sector/industry affinity
                 'general': vector<2048>  # toda la metadata
             }
         cv_data (dict, optional): Datos estructurados del CV que se convertirán a JSON string para usar con extract_metadata_with_gemini
@@ -28,7 +28,7 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
     Note:
         Se debe proporcionar cv_embeddings O cv_data
     """
-    print(f"🚀 Iniciando búsqueda vectorial...")
+    print(f"🚀 Iniciando búsqueda vectorial multi-aspecto...")
     start_time = time.time()
     
     try:
@@ -38,7 +38,6 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
         
         
         # 1. Obtener embeddings del CV
-        # Usar embeddings proporcionados directamente
         print(f"⏱️  Paso 1: Usando embeddings proporcionados directamente...")
         step1_start = time.time()
         query_embeddings = cv_embeddings
@@ -48,101 +47,145 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
         
         print(f"📊 Aspectos de embedding disponibles: {list(query_embeddings.keys())}")
         
-        # 2. Ejecutar búsqueda vectorial principal usando el embedding 'general'
-        print(f"⏱️  Paso 2: Ejecutando búsqueda vectorial principal...")
+        # 2. Ejecutar búsquedas vectoriales en paralelo para cada aspecto
+        print(f"⏱️  Paso 2: Ejecutando búsquedas vectoriales en paralelo...")
         step2_start = time.time()
         practicas_ref = db_jobs.collection("practicas_embeddings_test")
-    
         
-        # Ejecutar búsqueda principal usando el embedding 'general'
-        query_vector = Vector(query_embeddings.get('general', []))
-        vector_query = practicas_ref.find_nearest(
-            vector_field="embedding",
-            query_vector=query_vector,
-            distance_measure=DistanceMeasure.COSINE,
-            limit=500,
-        
-            distance_result_field="vector_distance",
-        )
-        
-        # Almacenar resultados de la búsqueda principal
-        principal_results = {}
-        for doc in vector_query.stream():
-            doc_data = doc.to_dict()
-            doc_id = doc.id
-            vector_distance = doc_data.get('vector_distance', 1.0)
-            vector_similarity = max(0, 1.0 - vector_distance)
+        def search_aspect_sync(aspect_name, cv_embedding):
+            """Función auxiliar para buscar por un aspecto específico (síncrona)"""
+            if not cv_embedding:
+                print(f"⚠️  No hay embedding para {aspect_name}")
+                return {}
             
-            principal_results[doc_id] = {
-                'similarity': vector_similarity,
-                'distance': vector_distance,
-                'data': doc_data
-            }
+            query_vector = Vector(cv_embedding)
+            vector_query = practicas_ref.find_nearest(
+                vector_field="embedding",
+                query_vector=query_vector,
+                distance_measure=DistanceMeasure.COSINE,
+                limit=500,
+                distance_result_field="vector_distance",
+            )
+            
+            results = {}
+            for doc in vector_query.stream():
+                doc_data = doc.to_dict()
+                doc_id = doc.id
+                vector_distance = doc_data.get('vector_distance', 1.0)
+                vector_similarity = max(0, 1.0 - vector_distance)
+                
+                results[doc_id] = {
+                    'similarity': vector_similarity,
+                    'distance': vector_distance,
+                    'data': doc_data
+                }
+            
+            print(f"✅ Búsqueda {aspect_name} completada: {len(results)} resultados")
+            return results
+        
+        # Ejecutar todas las búsquedas en paralelo usando ThreadPoolExecutor
+        print(f"🚀 Iniciando búsquedas vectoriales paralelas...")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            search_tasks = [
+                executor.submit(search_aspect_sync, 'general', query_embeddings.get('general')),
+                executor.submit(search_aspect_sync, 'category', query_embeddings.get('category')),  # sector_affinity
+                executor.submit(search_aspect_sync, 'hard_skills', query_embeddings.get('hard_skills')),
+                executor.submit(search_aspect_sync, 'soft_skills', query_embeddings.get('soft_skills'))
+            ]
+            
+            # Esperar a que todas las búsquedas terminen
+            search_results = [task.result() for task in search_tasks]
+        
+        # Organizar resultados por aspecto
+        aspect_results = {
+            'general': search_results[0],
+            'sector_affinity': search_results[1],  # category
+            'hard_skills': search_results[2],
+            'soft_skills': search_results[3]
+        }
         
         step2_time = time.time() - step2_start
-        print(f"✅ Paso 2 completado en {step2_time:.2f} segundos - Búsqueda vectorial principal ejecutada")
+        print(f"✅ Paso 2 completado en {step2_time:.2f} segundos - Búsquedas vectoriales paralelas ejecutadas")
         
-        # 3. Calcular similitudes por aspecto usando la similitud base
-        print(f"⏱️  Paso 3: Calculando similitudes por aspecto...")
+        # 3. Combinar todos los documentos únicos encontrados
+        print(f"⏱️  Paso 3: Combinando documentos únicos...")
         step3_start = time.time()
         
-        # Para cada documento, usar la similitud general como base y aplicar variaciones por aspecto
-        aspect_similarities = {}
-        for doc_id, doc_data in principal_results.items():
-            base_similarity = doc_data['similarity']  # Similitud del embedding general
-            
-            aspect_similarities[doc_id] = {
-                'hard_skills': base_similarity * 0.95,      # Ligeramente más estricto
-                'soft_skills': base_similarity * 0.98,      # Ligeramente más permisivo
-                'sector_afinnity': base_similarity * 0.92,              # Más estricto para trabajo (incluye category)
-                'general': base_similarity                   # Similitud exacta del embedding general
-            }
+        all_doc_ids = set()
+        for aspect_name, results in aspect_results.items():
+            all_doc_ids.update(results.keys())
+        
+        print(f"📊 Total de documentos únicos encontrados: {len(all_doc_ids)}")
         
         step3_time = time.time() - step3_start
-        print(f"✅ Paso 3 completado en {step3_time:.2f} segundos - Similitudes por aspecto calculadas")
+        print(f"✅ Paso 3 completado en {step3_time:.2f} segundos - Documentos únicos combinados")
         
-        # 4. Combinar resultados y calcular similitud total
-        print(f"⏱️  Paso 4: Combinando resultados y calculando similitud total...")
+        # 4. Calcular similitudes por aspecto para cada documento
+        print(f"⏱️  Paso 4: Calculando similitudes por aspecto...")
         step4_start = time.time()
         
         # Primera pasada: recolectar todos los puntajes sin procesar
         raw_scores = {
             'hard_skills': [],
             'soft_skills': [],
-            'sector_afinnity': [],
+            'sector_affinity': [],
             'general': []
         }
         practicas_sin_normalizar = []
         
-        # Recolectar todos los puntajes sin normalizar
-        for doc_id, doc_data in principal_results.items():
-            aspects = aspect_similarities[doc_id]
+        # Para cada documento único, obtener similitudes de todos los aspectos
+        for doc_id in all_doc_ids:
+            # Obtener similitudes de cada aspecto (0 si no existe)
+            general_sim = aspect_results['general'].get(doc_id, {}).get('similarity', 0)
+            sector_sim = aspect_results['sector_affinity'].get(doc_id, {}).get('similarity', 0)
+            hard_skills_sim = aspect_results['hard_skills'].get(doc_id, {}).get('similarity', 0)
+            soft_skills_sim = aspect_results['soft_skills'].get(doc_id, {}).get('similarity', 0)
+            
+            # Usar el documento del aspecto general como base (o el primero disponible)
+            base_doc_data = None
+            for aspect_name in ['general', 'sector_affinity', 'hard_skills', 'soft_skills']:
+                if doc_id in aspect_results[aspect_name]:
+                    base_doc_data = aspect_results[aspect_name][doc_id]['data']
+                    break
+            
+            if base_doc_data is None:
+                continue
             
             # Almacenar puntajes sin normalizar
-            raw_scores['hard_skills'].append(aspects['hard_skills'] * 100)
-            raw_scores['soft_skills'].append(aspects['soft_skills'] * 100)
-            raw_scores['sector_afinnity'].append(aspects['sector_afinnity'] * 100)
-            raw_scores['general'].append(aspects['general'] * 100)
+            raw_scores['hard_skills'].append(hard_skills_sim * 100)
+            raw_scores['soft_skills'].append(soft_skills_sim * 100)
+            raw_scores['sector_affinity'].append(sector_sim * 100)
+            raw_scores['general'].append(general_sim * 100)
             
             # Crear el formato esperado por el endpoint de manera robusta
             campos_excluidos = {'metadata', 'embedding', 'vector_distance'}
-            base_data = doc_data.get('data', doc_data)
-            practica_formateada = {k: v for k, v in base_data.items() if k not in campos_excluidos}
+            practica_formateada = {k: v for k, v in base_doc_data.items() if k not in campos_excluidos}
+            
             # Si 'fecha_agregado' no está en data pero sí en el documento raíz, incluirlo
-            if 'fecha_agregado' not in practica_formateada and 'fecha_agregado' in doc_data.get('data', {}):
-                practica_formateada['fecha_agregado'] = doc_data['data']['fecha_agregado']
-            if 'fecha_agregado' not in practica_formateada and 'fecha_agregado' in doc_data:
-                practica_formateada['fecha_agregado'] = doc_data['fecha_agregado']
+            if 'fecha_agregado' not in practica_formateada and 'fecha_agregado' in base_doc_data:
+                practica_formateada['fecha_agregado'] = base_doc_data['fecha_agregado']
             
             # Guardar datos de la práctica para el procesamiento posterior
             practicas_sin_normalizar.append({
                 'data': practica_formateada,
-                'aspects': aspects,
-                'distance': doc_data['distance'],
-                'similarity': doc_data['similarity']
+                'aspects': {
+                    'hard_skills': hard_skills_sim,
+                    'soft_skills': soft_skills_sim,
+                    'sector_affinity': sector_sim,
+                    'general': general_sim
+                },
+                'distance': aspect_results['general'].get(doc_id, {}).get('distance', 1.0),
+                'similarity': general_sim
             })
         
-        # Función de normalización mejorada
+        step4_time = time.time() - step4_start
+        print(f"✅ Paso 4 completado en {step4_time:.2f} segundos - Similitudes por aspecto calculadas")
+        
+        # 5. Normalizar puntajes y calcular similitud total
+        print(f"⏱️  Paso 5: Normalizando puntajes y calculando similitud total...")
+        step5_start = time.time()
+        
+        # Función de normalización mejorada con penalización de similitudes bajas
         def normalize_scores(scores):
             if not scores or len(scores) == 0:
                 return scores
@@ -150,18 +193,30 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
             min_original = min(scores)
             max_original = max(scores)
 
-            print(f"Min original: {min_original}")
-            print(f"Max original: {max_original}")
+            print(f"Min original: {min_original:.2f}")
+            print(f"Max original: {max_original:.2f}")
             
             # Si todos los valores son iguales, devolver 5% para todos
             if max_original - min_original < 1e-6:
                 return [5.0] * len(scores)
             
-            # Asegurar que el valor máximo se mantenga igual
-            return [
-                5 + (score - min_original) / (max_original - min_original) * (max_original - 5)
-                for score in scores
-            ]
+            # Normalización con penalización exponencial para similitudes bajas
+            # Esto asegura que las similitudes muy bajas (< 0.3) se penalicen fuertemente
+            normalized = []
+            for score in scores:
+                # Normalizar a rango [0, 1]
+                normalized_score = (score - min_original) / (max_original - min_original)
+                
+                # Aplicar transformación exponencial para penalizar valores bajos
+                # score^2 hace que valores bajos se vuelvan aún más bajos
+                penalized_score = normalized_score ** 2
+                
+                # Escalar a rango [5, 95] con mínimo garantizado de 5%
+                final_score = 5 + penalized_score * 90
+                
+                normalized.append(final_score)
+            
+            return normalized
         
         # Normalizar todos los puntajes
         normalized_scores = {}
@@ -228,21 +283,21 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
                     return None
             return None
 
-        # Segunda pasada: calcular similitud total con puntajes normalizados
+        # Calcular similitud total con puntajes normalizados
         resultados_validos = []
         for i, practica_data in enumerate(practicas_sin_normalizar):
             # Obtener puntajes normalizados para esta práctica
             sim_requisitos = normalized_scores['hard_skills'][i]
             sim_soft_skills = normalized_scores['soft_skills'][i]
-            sim_sector = normalized_scores['sector_afinnity'][i]
+            sim_sector = normalized_scores['sector_affinity'][i]
             sim_general = normalized_scores['general'][i]
             
             # Calcular similitud total con pesos específicos usando puntajes normalizados
             similitud_total = (
-                sim_requisitos * 0.30 +    # 30% habilidades técnicas
-                sim_soft_skills * 0.20 +   # 20% habilidades blandas
-                sim_sector * 0.40 +        # 40% afinidad laboral
-                sim_general * 0.10         # 10% evaluación general
+                sim_requisitos * 0.40 +    # 30% habilidades técnicas
+                sim_soft_skills * 0.10 +   # 20% habilidades blandas
+                sim_sector * 0.30 +        # 40% afinidad laboral
+                sim_general * 0.20         # 10% evaluación general
             )
 
             #no incluir practicas por debajo del porcentaje_minimo_aceptado
@@ -268,34 +323,35 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
                 'vector_distance': round(practica_data['distance'], 4),
                 'vector_similarity': round(practica_data['similarity'], 4),
                 'justificacion_requisitos': f"Similitud técnica: {sim_requisitos:.1f}% (hard_skills embedding)",
-                'justificacion_afinidad': f"Afinidad laboral: {sim_sector:.1f}% (job embedding: estudios + categoría)",
+                'justificacion_afinidad': f"Afinidad laboral: {sim_sector:.1f}% (category embedding)",
             })
             
             
             resultados_validos.append(practica)
         
-        step4_time = time.time() - step4_start
+        step5_time = time.time() - step5_start
         
-        print(f"✅ Paso 4 completado en {step4_time:.2f} segundos - Resultados combinados y similitud total calculada")
+        print(f"✅ Paso 5 completado en {step5_time:.2f} segundos - Resultados combinados y similitud total calculada")
         
         # Ordenar por similitud total
-        print(f"⏱️  Paso 5: Ordenando resultados por similitud total...")
-        step5_start = time.time()
+        print(f"⏱️  Paso 6: Ordenando resultados por similitud total...")
+        step6_start = time.time()
         
         # Ordenar por similitud total (mayor similitud primero)
         resultados_validos.sort(key=lambda x: x.get('similitud_total', 0), reverse=True)
         print(f"✅ Resultados ordenados por similitud total")
         
-        step5_time = time.time() - step5_start
+        step6_time = time.time() - step6_start
         
         end_time = time.time()
         tiempo_total = end_time - start_time
         print(f"🎯 RESUMEN DE TIEMPOS:")
         print(f"   - Generación de embeddings: {step1_time:.2f}s")
-        print(f"   - Búsqueda vectorial principal: {step2_time:.2f}s")
-        print(f"   - Similitudes por aspecto calculadas: {step3_time:.2f}s")
-        print(f"   - Resultados combinados y similitud total calculada: {step4_time:.2f}s")
-        print(f"   - Ordenamiento final: {step5_time:.4f}s")
+        print(f"   - Búsquedas vectoriales paralelas: {step2_time:.2f}s")
+        print(f"   - Combinación de documentos únicos: {step3_time:.2f}s")
+        print(f"   - Similitudes por aspecto calculadas: {step4_time:.2f}s")
+        print(f"   - Resultados combinados y similitud total calculada: {step5_time:.2f}s")
+        print(f"   - Ordenamiento final: {step6_time:.4f}s")
         print(f"✅ Búsqueda multi-aspecto completada en {tiempo_total:.2f} segundos TOTAL")
         print(f"📊 {len(resultados_validos)} prácticas procesadas con {len(query_embeddings)} aspectos")
         
@@ -361,6 +417,7 @@ from langchain_core.prompts import PromptTemplate
 from schemas.job_types import JobMetadata
 from prompts.job_prompts import JOB_METADATA_PROMPT
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 # --- Configuración Inicial ---
 # Asegúrate de que 'db' sea una instancia de firestore.Client()
