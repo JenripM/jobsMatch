@@ -30,6 +30,7 @@ from services.job_service import (
     obtener_practicas,
     obtener_practicas_recientes,
     buscar_practicas_afines,
+    obtener_practica_por_id_y_calcular_match,
 )
 from services.user_service import (
     fetch_user_cv,
@@ -306,6 +307,108 @@ async def match_practices(request: Request):
         raise HTTPException(status_code=400, detail="Error al parsear JSON")
     except Exception as e:
         print(f"❌ Error en match_practices: {e}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@app.post("/match-practice")
+async def match_single_practice(request: Request):
+    """
+    Endpoint para calcular el match entre el CV de un usuario y una práctica específica.
+    
+    Este endpoint se utiliza desde la ruta frontend /job_offers/{job_offer_id}
+    y devuelve una sola práctica con su score de match calculado.
+    
+    Args:
+        request: Request con JSON body que debe contener:
+            - user_id: ID del usuario
+            - practice_id: ID de la práctica específica
+    
+    Returns:
+        dict: Práctica con scores de match calculados
+    """
+    # Iniciar medición de tiempo total
+    start_total = time.time()
+    timing_stats = {}
+    
+    try:
+        # Leer el body del request y parsear JSON
+        body = await request.body()
+        request_data = json.loads(body)
+        
+        print("------ Inputs ------ ")
+        print("user_id: ", request_data.get("user_id", None))
+        print("practice_id: ", request_data.get("practice_id", None))
+
+        user_id = request_data.get("user_id")
+        practice_id = request_data.get("practice_id")
+        
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id es requerido")
+        
+        if not practice_id:
+            raise HTTPException(status_code=400, detail="practice_id es requerido")
+
+        # Obtener el CV del usuario
+        cv_user = await fetch_user_cv(user_id)
+        
+        if not cv_user:
+            raise HTTPException(status_code=404, detail="No se pudo obtener el CV del usuario. Verifique que el usuario existe y tiene un CV válido.")
+
+        # Verificar que el CV tenga embeddings
+        if not cv_user.get("embeddings", None):
+            # Retrocompatibilidad con versiones antiguas de la web
+            print(f"⏱️  Generando embeddings del CV desde datos estructurados...")
+            step1_start = time.time()
+            from services.user_service import generate_cv_embeddings
+            
+            # Convertir cv_data a string usando json.dumps
+            cv_text = json.dumps(cv_user.get("data", None), ensure_ascii=False)
+            embeddings = await generate_cv_embeddings(cv_text)
+            cv_user["embeddings"] = embeddings
+            print(f"✅ Embeddings generados en {time.time() - step1_start:.2f} segundos")
+            #actualizar el cv en la base de datos
+            await update_cv_service(cv_user.get("id"), cv_user)
+        
+        # Iniciar medición de búsqueda
+        start_search = time.time()
+        
+        # Obtener la práctica específica y calcular match
+        practica_con_match = await obtener_practica_por_id_y_calcular_match(
+            practica_id=practice_id,
+            cv_embeddings=cv_user.get("embeddings", None)
+        )
+        
+        timing_stats['search_matching'] = time.time() - start_search
+        
+        if not practica_con_match:
+            raise HTTPException(status_code=404, detail=f"Práctica con ID {practice_id} no encontrada")
+        
+        # Calcular tiempo total
+        timing_stats['total_time'] = time.time() - start_total
+        
+        print(f"\n⏱️ ESTADÍSTICAS DE TIEMPO:")
+        print(f"   - Búsqueda/Matching: {timing_stats['search_matching']:.4f}s")
+        print(f"   - 🎆 TIEMPO TOTAL: {timing_stats['total_time']:.4f}s")
+        
+        # Preparar respuesta
+        response_data = {
+            "practica": practica_con_match,
+            "metadata": {
+                "practice_id": practice_id,
+                "user_id": user_id,
+                "total_time": timing_stats['total_time'],
+                "search_matching_time": timing_stats['search_matching']
+            }
+        }
+        
+        return response_data
+            
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Error al parsear JSON")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error en match_single_practice: {e}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 

@@ -8,8 +8,48 @@ from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
 from datetime import datetime, timedelta, timezone
 import re
+from concurrent.futures import ThreadPoolExecutor
 
-async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: int = 5, cv_embeddings: dict = None ):
+# --- Normalización determinística compartida con parámetros específicos por aspecto ---
+def _clamp(value: float, min_value: float, max_value: float) -> float:
+    return max(min_value, min(max_value, value))
+
+def normalize_cosine_similarity(similarity: float, min_sim: float = 0.87, max_sim: float = 0.98) -> float:
+    """Normalización lineal simple: [min_sim, max_sim] → [0, 100]
+    
+    Args:
+        similarity: Similitud coseno (0-1)
+        min_sim: Similitud mínima observada
+        max_sim: Similitud máxima posible
+    
+    Returns:
+        Porcentaje normalizado (0-100)
+    """
+    if similarity <= min_sim:
+        return 0.2
+    if similarity >= max_sim:
+        return 99.0
+    
+    # Normalización lineal: (s - min) / (max - min) * 100
+    return ((similarity - min_sim) / (max_sim - min_sim)) * 100.0
+
+def normalize_similarity_by_aspect(aspect_name: str, similarity: float) -> float:
+    """Normalización unificada con parámetros específicos por aspecto"""
+    if aspect_name in ['hard_skills', 'soft_skills']:
+        # Habilidades técnicas y blandas: más estrictas
+        return normalize_cosine_similarity(similarity, min_sim=0.83, max_sim=0.95)
+    elif aspect_name == 'sector_affinity':
+        # Sector affinity: parámetros intermedios
+        return normalize_cosine_similarity(similarity, min_sim=0.85, max_sim=0.93)
+    else:
+        # General: más permisiva
+        return normalize_cosine_similarity(similarity, min_sim=0.85, max_sim=0.98)
+
+def normalize_list_cosine(similarities: list[float]) -> list[float]:
+    """Normaliza una lista de similitudes coseno usando la función lineal"""
+    return [normalize_cosine_similarity(s) for s in similarities]
+
+async def buscar_practicas_afines(percentage_threshold: float = 0, sinceDays: int = 5, cv_embeddings: dict = None ):
     """
     Función que usa búsqueda vectorial multi-aspecto para encontrar prácticas afines
     
@@ -161,6 +201,9 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
             campos_excluidos = {'metadata', 'embedding', 'vector_distance'}
             practica_formateada = {k: v for k, v in base_doc_data.items() if k not in campos_excluidos}
             
+            # Agregar el ID de Firestore como campo 'id'
+            practica_formateada['id'] = doc_id
+            
             # Si 'fecha_agregado' no está en data pero sí en el documento raíz, incluirlo
             if 'fecha_agregado' not in practica_formateada and 'fecha_agregado' in base_doc_data:
                 practica_formateada['fecha_agregado'] = base_doc_data['fecha_agregado']
@@ -185,43 +228,30 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
         print(f"⏱️  Paso 5: Normalizando puntajes y calculando similitud total...")
         step5_start = time.time()
         
-        # Función de normalización mejorada con penalización de similitudes bajas
-        def normalize_scores(scores):
-            if not scores or len(scores) == 0:
-                return scores
-                
-            min_original = min(scores)
-            max_original = max(scores)
-
-            print(f"Min original: {min_original:.2f}")
-            print(f"Max original: {max_original:.2f}")
-            
-            # Si todos los valores son iguales, devolver 5% para todos
-            if max_original - min_original < 1e-6:
-                return [5.0] * len(scores)
-            
-            # Normalización con penalización exponencial para similitudes bajas
-            # Esto asegura que las similitudes muy bajas (< 0.3) se penalicen fuertemente
-            normalized = []
-            for score in scores:
-                # Normalizar a rango [0, 1]
-                normalized_score = (score - min_original) / (max_original - min_original)
-                
-                # Aplicar transformación exponencial para penalizar valores bajos
-                # score^2 hace que valores bajos se vuelvan aún más bajos
-                penalized_score = normalized_score ** 2
-                
-                # Escalar a rango [5, 95] con mínimo garantizado de 5%
-                final_score = 5 + penalized_score * 90
-                
-                normalized.append(final_score)
-            
-            return normalized
+        # Normalización determinística usando función unificada por aspecto
+        def normalize_scores_by_aspect(aspect_name, scores):
+            # Convertir de vuelta a similitudes coseno (0-1) y normalizar usando función unificada
+            similarities = [s / 100.0 for s in scores]  # Convertir de 0-100 a 0-1
+            return [normalize_similarity_by_aspect(aspect_name, s) for s in similarities]
         
-        # Normalizar todos los puntajes
+        # Normalizar todos los puntajes usando función unificada
         normalized_scores = {}
         for aspect, scores in raw_scores.items():
-            normalized_scores[aspect] = normalize_scores(scores)
+            normalized_scores[aspect] = normalize_scores_by_aspect(aspect, scores)
+        
+        # DEBUG: Encontrar la similitud coseno más baja para establecer umbral
+        min_similarities = {}
+        for aspect_name in ['hard_skills', 'soft_skills', 'sector_affinity', 'general']:
+            if aspect_name in raw_scores and raw_scores[aspect_name]:
+                min_sim = min(raw_scores[aspect_name]) / 100.0  # Convertir de vuelta a 0-1
+                min_similarities[aspect_name] = min_sim
+                print(f"🔍 {aspect_name}: similitud mínima = {min_sim:.4f}")
+        
+        # Encontrar el mínimo global
+        if min_similarities:
+            global_min = min(min_similarities.values())
+            print(f"🎯 SIMILITUD COSENO MÍNIMA GLOBAL: {global_min:.4f}")
+            print(f"   (Este valor debería ser el umbral para colapsar a 5%)")
         
         # Helper: parseo tolerante de fecha_agregado (ISO, Firestore y formatos en español)
         def parse_fecha_agregado(fecha_val):
@@ -286,7 +316,7 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
         # Calcular similitud total con puntajes normalizados
         resultados_validos = []
         for i, practica_data in enumerate(practicas_sin_normalizar):
-            # Obtener puntajes normalizados para esta práctica
+            # Obtener puntajes normalizados para esta práctica (por aspecto)
             sim_requisitos = normalized_scores['hard_skills'][i]
             sim_soft_skills = normalized_scores['soft_skills'][i]
             sim_sector = normalized_scores['sector_affinity'][i]
@@ -294,10 +324,10 @@ async def buscar_practicas_afines(percentage_threshold: float = 0.5, sinceDays: 
             
             # Calcular similitud total con pesos específicos usando puntajes normalizados
             similitud_total = (
-                sim_requisitos * 0.40 +    # 30% habilidades técnicas
-                sim_soft_skills * 0.10 +   # 20% habilidades blandas
-                sim_sector * 0.30 +        # 40% afinidad laboral
-                sim_general * 0.20         # 10% evaluación general
+                sim_requisitos * 0.30 +    # 30% habilidades técnicas
+                sim_soft_skills * 0.10 +   # 10% habilidades blandas
+                sim_sector * 0.40 +        # 40% afinidad laboral
+                sim_general * 0.20         # 20% evaluación general
             )
 
             #no incluir practicas por debajo del porcentaje_minimo_aceptado
@@ -631,3 +661,161 @@ async def generate_metadata_for_collection(collection_name=None, overwrite_exist
     except Exception as e:
         print(f"Error crítico al acceder a la colección de Firestore: {e}")
         return
+
+async def obtener_practica_por_id_y_calcular_match(practica_id: str, cv_embeddings: dict = None):
+    """
+    Obtiene una práctica específica por ID y calcula su match con el CV del usuario
+    
+    Args:
+        practica_id (str): ID de la práctica a obtener
+        cv_embeddings (dict, optional): Diccionario de embeddings pre-calculados del CV
+            {
+                'hard_skills': vector<2048>,
+                'soft_skills': vector<2048>,
+                'category': vector<2048>,  # sector/industry affinity
+                'general': vector<2048>  # toda la metadata
+            }
+    
+    Returns:
+        dict: Práctica con scores de match calculados, o None si no se encuentra
+    """
+    print(f"🚀 Obteniendo práctica {practica_id} y calculando match...")
+    start_time = time.time()
+    
+    try:
+        if cv_embeddings is None:
+            print(f"❌ No se proporcionaron embeddings del CV")
+            return None
+        
+        # 1. Obtener la práctica específica
+        print(f"⏱️  Paso 1: Obteniendo práctica por ID...")
+        step1_start = time.time()
+        
+        practicas_ref = db_jobs.collection("practicas_embeddings_test")
+        doc_ref = practicas_ref.document(practica_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            print(f"❌ Práctica {practica_id} no encontrada")
+            return None
+        
+        practica_data = doc.to_dict()
+        step1_time = time.time() - step1_start
+        print(f"✅ Paso 1 completado en {step1_time:.4f} segundos - Práctica obtenida")
+        
+        # 2. Calcular similitudes vectoriales para cada aspecto
+        print(f"⏱️  Paso 2: Calculando similitudes vectoriales...")
+        step2_start = time.time()
+        
+        from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
+        from google.cloud.firestore_v1.vector import Vector
+        
+        aspect_similarities = {}
+        
+        # Calcular similitud para cada aspecto del CV
+        for aspect_name, cv_embedding in cv_embeddings.items():
+            if not cv_embedding:
+                print(f"⚠️  No hay embedding para {aspect_name}")
+                aspect_similarities[aspect_name] = 0.0
+                continue
+            
+            # Obtener el embedding de la práctica para este aspecto
+            practica_embedding = practica_data.get('embedding')
+            if not practica_embedding:
+                print(f"⚠️  La práctica no tiene embedding para {aspect_name}")
+                aspect_similarities[aspect_name] = 0.0
+                continue
+            
+            # Calcular similitud coseno
+            try:
+                query_vector = Vector(cv_embedding)
+                target_vector = Vector(practica_embedding)
+                
+                # Calcular distancia coseno
+                distance = 1 - (sum(a * b for a, b in zip(cv_embedding, practica_embedding)) / 
+                               (sum(a * a for a in cv_embedding) ** 0.5 * 
+                                sum(b * b for b in practica_embedding) ** 0.5))
+                
+                similarity = max(0, 1.0 - distance)
+                aspect_similarities[aspect_name] = similarity
+                
+                print(f"✅ Similitud {aspect_name}: {similarity:.4f}")
+                
+            except Exception as e:
+                print(f"❌ Error calculando similitud para {aspect_name}: {e}")
+                aspect_similarities[aspect_name] = 0.0
+        
+        step2_time = time.time() - step2_start
+        print(f"✅ Paso 2 completado en {step2_time:.4f} segundos - Similitudes calculadas")
+        
+        # 3. Normalizar puntajes y calcular similitud total
+        print(f"⏱️  Paso 3: Normalizando puntajes y calculando similitud total...")
+        step3_start = time.time()
+        
+        # Mapear nombres de aspectos para consistencia
+        aspect_mapping = {
+            'general': 'general',
+            'category': 'sector_affinity',
+            'hard_skills': 'hard_skills',
+            'soft_skills': 'soft_skills'
+        }
+        
+        # Obtener puntajes sin normalizar
+        raw_scores = {}
+        for cv_aspect, practica_aspect in aspect_mapping.items():
+            if cv_aspect in aspect_similarities:
+                raw_scores[practica_aspect] = [aspect_similarities[cv_aspect] * 100]
+        
+        # Normalización determinística usando función unificada por aspecto
+        sim_requisitos = normalize_similarity_by_aspect('hard_skills', aspect_similarities.get('hard_skills', 0))
+        sim_soft_skills = normalize_similarity_by_aspect('soft_skills', aspect_similarities.get('soft_skills', 0))
+        sim_sector = normalize_similarity_by_aspect('sector_affinity', aspect_similarities.get('category', 0))  # category = sector_affinity
+        sim_general = normalize_similarity_by_aspect('general', aspect_similarities.get('general', 0))
+        
+        # Usar exactamente los mismos pesos que en match-practices
+        similitud_total = (
+            sim_requisitos * 0.40 +    # 40% habilidades técnicas
+            sim_soft_skills * 0.10 +   # 10% habilidades blandas
+            sim_sector * 0.30 +        # 30% afinidad laboral
+            sim_general * 0.20         # 20% evaluación general
+        )
+        
+        step3_time = time.time() - step3_start
+        print(f"✅ Paso 3 completado en {step3_time:.4f} segundos - Similitud total: {similitud_total:.2f}%")
+        
+        # 4. Formatear respuesta
+        print(f"⏱️  Paso 4: Formateando respuesta...")
+        step4_start = time.time()
+        
+        # Excluir campos internos de la respuesta
+        campos_excluidos = {'metadata', 'embedding', 'vector_distance'}
+        practica_formateada = {k: v for k, v in practica_data.items() if k not in campos_excluidos}
+        
+        # Agregar el ID de Firestore como campo 'id'
+        practica_formateada['id'] = practica_id
+        
+        # Agregar scores de match
+        practica_formateada['match_scores'] = {
+            'hard_skills': sim_requisitos,
+            'soft_skills': sim_soft_skills,
+            'sector_affinity': sim_sector,
+            'general': sim_general,
+            'total': similitud_total
+        }
+        
+        # Agregar similitudes raw para debugging
+        practica_formateada['raw_similarities'] = aspect_similarities
+        
+        step4_time = time.time() - step4_start
+        total_time = time.time() - start_time
+        
+        print(f"✅ Paso 4 completado en {step4_time:.4f} segundos")
+        print(f"🎆 TIEMPO TOTAL: {total_time:.4f} segundos")
+        
+        return practica_formateada
+        
+    except Exception as e:
+        print(f"❌ Error en obtener_practica_por_id_y_calcular_match: {e}")
+        import traceback
+        print(f"   Stack trace: {traceback.format_exc()}")
+        return None
