@@ -201,10 +201,16 @@ async def match_practices(request: Request):
                     "total_practicas_procesadas": len(cached_matches['practices']),
                     "total_practicas_devueltas": min(limit, len(cached_matches['practices'])),
                     "streaming": False,
+                    "streaming_used": False,
                     "cache_hit": True,
                     "timing_stats": timing_stats
                 }
             }
+            
+            # Print del JSON a devolver (sin las prácticas)
+            print("📤 JSON a devolver (sin prácticas):")
+            print(f"   - practicas: [{len(response_data['practicas'])} elementos]")
+            print(f"   - metadata: {json.dumps(response_data['metadata'], indent=2, default=custom_json_serializer)}")
             
             return response_data
 
@@ -283,10 +289,16 @@ async def match_practices(request: Request):
                     "total_practicas_procesadas": len(practicas_con_similitud),
                     "total_practicas_devueltas": min(limit, len(practicas_con_similitud)),
                     "streaming": False,
+                    "streaming_used": False,
                     "cache_hit": False,
                     "timing_stats": timing_stats
                 }
             }
+            
+            # Print del JSON a devolver (sin las prácticas)
+            print("📤 JSON a devolver (sin prácticas):")
+            print(f"   - practicas: [{len(response_data['practicas'])} elementos]")
+            print(f"   - metadata: {json.dumps(response_data['metadata'], indent=2, default=custom_json_serializer)}")
             
             return response_data
             
