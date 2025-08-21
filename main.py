@@ -191,35 +191,22 @@ async def match_practices(request: Request):
             timing_stats['cache_hit'] = True
             timing_stats['total_time'] = time.time() - start_total
             
-            # Usar streaming si está habilitado
-            if STREAMING_ENABLED and len(cached_matches.get('practices', [])) > 0:
-                print(f"📡 Usando STREAMING PURO desde cache - {len(cached_matches['practices'])} prácticas")
-                
-                return StreamingResponse(
-                    generate_ndjson_streaming_practices(cached_matches['practices'], timing_stats),
-                    media_type="application/x-ndjson",
-                    headers={
-                        "Content-Type": "application/x-ndjson",
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive"
-                    }
-                )
-            else:
-                print(f"📄 Usando respuesta JSON tradicional desde cache - {len(cached_matches['practices'])} prácticas")
-                
-                limit = request_data.get("limit", DEFAULT_PRACTICES_LIMIT)
-                response_data = {
-                    "practicas": cached_matches['practices'][:limit],
-                    "metadata": {
-                        "total_practicas_procesadas": len(cached_matches['practices']),
-                        "total_practicas_devueltas": min(limit, len(cached_matches['practices'])),
-                        "streaming": False,
-                        "cache_hit": True,
-                        "timing_stats": timing_stats
-                    }
+            # Cuando hay cache hit, siempre retornar de golpe sin streaming
+            print(f"📄 Retornando respuesta JSON tradicional desde cache - {len(cached_matches['practices'])} prácticas")
+            
+            limit = request_data.get("limit", DEFAULT_PRACTICES_LIMIT)
+            response_data = {
+                "practicas": cached_matches['practices'][:limit],
+                "metadata": {
+                    "total_practicas_procesadas": len(cached_matches['practices']),
+                    "total_practicas_devueltas": min(limit, len(cached_matches['practices'])),
+                    "streaming": False,
+                    "cache_hit": True,
+                    "timing_stats": timing_stats
                 }
-                
-                return response_data
+            }
+            
+            return response_data
 
         # Si no hay cache, calcular matches
         print("🔍 No se encontró cache, calculando matches")
