@@ -377,7 +377,7 @@ async def upload_cv_to_database(pdf_file_content: bytes, user_id: str) -> Dict[s
             print(f"   ✅ Es el primer CV del usuario, actualizando colección Users...")
             
             # Actualizar el documento del usuario en la colección Users
-            user_doc_ref = db_users.collection("Users").document(user_id)
+            user_doc_ref = db_users.collection("users").document(user_id)
             user_doc = user_doc_ref.get()
             
             if user_doc.exists:
@@ -712,8 +712,8 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
         users_update_start = time.time()
         existing_cvs_list = list(db_users.collection("userCVs").where("userId", "==", user_id).stream())
         if len(existing_cvs_list) == 1:
-            print("   ✅ Primer CV del usuario. Actualizando 'Users.cvSelectedId'...")
-            user_doc_ref = db_users.collection("Users").document(user_id)
+            print("   ✅ Primer CV del usuario. Actualizando 'user.cvSelectedId'...")
+            user_doc_ref = db_users.collection("users").document(user_id)
             user_doc = user_doc_ref.get()
             if user_doc.exists:
                 user_doc_ref.update({
@@ -986,14 +986,14 @@ async def update_cv(cv_id: str, cv: Dict[str, Any]) -> Dict[str, Any]:
 
 async def delete_cv(cv_id: str) -> Dict[str, Any]:
     """
-    Elimina un CV por ID. Si era el seleccionado en 'Users.cvSelectedId', intenta
+    Elimina un CV por ID. Si era el seleccionado en 'user.cvSelectedId', intenta
     reasignar al CV más reciente del usuario o lo limpia si no hay más.
 
     Args:
         cv_id: ID del documento de CV en Firestore
 
     Returns:
-        Dict con el resultado de la operación y ajustes en 'Users' si aplica
+        Dict con el resultado de la operación y ajustes en 'users' si aplica
     """
     start_time = time.time()
 
@@ -1016,7 +1016,7 @@ async def delete_cv(cv_id: str) -> Dict[str, Any]:
         was_selected_cv = False
         
         if user_id:
-            user_doc_ref = db_users.collection("Users").document(user_id)
+            user_doc_ref = db_users.collection("users").document(user_id)
             user_snap = user_doc_ref.get()
             if user_snap.exists:
                 user_data = user_snap.to_dict() or {}
