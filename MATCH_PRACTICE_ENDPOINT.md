@@ -25,7 +25,8 @@ Calcula el match entre el CV de un usuario y una práctica específica.
 ```json
 {
   "user_id": "string",
-  "practice_id": "string"
+  "practice_id": "string",
+  "cv_id": "string"
 }
 ```
 
@@ -33,6 +34,7 @@ Calcula el match entre el CV de un usuario y una práctica específica.
 
 - `user_id` (string, requerido): ID del usuario
 - `practice_id` (string, requerido): ID de la práctica específica
+- `cv_id` (string, opcional): ID del CV específico a usar. Si no se proporciona, usa el CV seleccionado del usuario
 
 #### Response
 
@@ -64,6 +66,8 @@ Calcula el match entre el CV de un usuario y una práctica específica.
   "metadata": {
     "practice_id": "string",
     "user_id": "string",
+    "cv_id": "string",
+    "cv_source": "specific|selected",
     "total_time": 0.0456,
     "search_matching_time": 0.0234
   }
@@ -74,8 +78,50 @@ Calcula el match entre el CV de un usuario y una práctica específica.
 
 - `200 OK`: Práctica encontrada y match calculado exitosamente
 - `400 Bad Request`: Faltan parámetros requeridos (`user_id` o `practice_id`)
-- `404 Not Found`: Usuario no encontrado o práctica no encontrada
+- `403 Forbidden`: El CV especificado no pertenece al usuario
+- `404 Not Found`: Usuario no encontrado, CV no encontrado o práctica no encontrada
 - `500 Internal Server Error`: Error interno del servidor
+
+## Funcionalidad de CV Específico
+
+### Comportamiento del Campo `cv_id`
+
+El endpoint soporta dos modos de operación:
+
+1. **CV Específico** (cuando se proporciona `cv_id`):
+   - Usa el CV con el ID especificado
+   - Verifica que el CV pertenece al usuario
+   - Permite hacer match con cualquier CV del usuario
+
+2. **CV Seleccionado** (cuando no se proporciona `cv_id`):
+   - Usa el CV marcado como seleccionado del usuario
+   - Mantiene la funcionalidad original del endpoint
+
+### Ejemplos de Uso
+
+```javascript
+// Usar CV específico
+const response1 = await fetch('/match-practice', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    user_id: 'user_123',
+    practice_id: 'practice_456',
+    cv_id: 'cv_789'  // CV específico
+  })
+});
+
+// Usar CV seleccionado (comportamiento original)
+const response2 = await fetch('/match-practice', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    user_id: 'user_123',
+    practice_id: 'practice_456'
+    // Sin cv_id - usa CV seleccionado
+  })
+});
+```
 
 ## Implementación Técnica
 
@@ -127,7 +173,8 @@ const response = await fetch('/match-practice', {
   },
   body: JSON.stringify({
     user_id: 'user_123',
-    practice_id: 'practice_456'
+    practice_id: 'practice_456',
+    cv_id: 'cv_789'  // Opcional: CV específico
   })
 });
 
@@ -138,6 +185,7 @@ const { practica, metadata } = data;
 console.log(`Match: ${practica.match_scores.total}%`);
 console.log(`Hard Skills: ${practica.match_scores.hard_skills}%`);
 console.log(`Soft Skills: ${practica.match_scores.soft_skills}%`);
+console.log(`CV usado: ${metadata.cv_id} (${metadata.cv_source})`);
 ```
 
 ### Integración con React
@@ -145,20 +193,27 @@ console.log(`Soft Skills: ${practica.match_scores.soft_skills}%`);
 ```jsx
 import { useState, useEffect } from 'react';
 
-function JobOfferDetail({ jobOfferId, userId }) {
+function JobOfferDetail({ jobOfferId, userId, cvId }) {
   const [matchData, setMatchData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchMatch = async () => {
       try {
+        const requestBody = {
+          user_id: userId,
+          practice_id: jobOfferId
+        };
+        
+        // Agregar cv_id solo si se proporciona
+        if (cvId) {
+          requestBody.cv_id = cvId;
+        }
+        
         const response = await fetch('/match-practice', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user_id: userId,
-            practice_id: jobOfferId
-          })
+          body: JSON.stringify(requestBody)
         });
         
         const data = await response.json();
@@ -173,7 +228,7 @@ function JobOfferDetail({ jobOfferId, userId }) {
     if (userId && jobOfferId) {
       fetchMatch();
     }
-  }, [userId, jobOfferId]);
+  }, [userId, jobOfferId, cvId]);
 
   if (loading) return <div>Cargando match...</div>;
   if (!matchData) return <div>Error al cargar match</div>;
@@ -190,6 +245,9 @@ function JobOfferDetail({ jobOfferId, userId }) {
           <span>Hard Skills: {practica.match_scores.hard_skills}%</span>
           <span>Soft Skills: {practica.match_scores.soft_skills}%</span>
           <span>Sector: {practica.match_scores.sector_affinity}%</span>
+        </div>
+        <div className="cv-info">
+          <small>CV usado: {matchData.metadata.cv_id} ({matchData.metadata.cv_source})</small>
         </div>
       </div>
     </div>

@@ -320,8 +320,9 @@ async def match_single_practice(request: Request):
     
     Args:
         request: Request con JSON body que debe contener:
-            - user_id: ID del usuario
-            - practice_id: ID de la práctica específica
+            - user_id: ID del usuario (requerido)
+            - practice_id: ID de la práctica específica (requerido)
+            - cv_id: ID del CV específico a usar (opcional, si no se proporciona usa el CV seleccionado del usuario)
     
     Returns:
         dict: Práctica con scores de match calculados
@@ -338,9 +339,11 @@ async def match_single_practice(request: Request):
         print("------ Inputs ------ ")
         print("user_id: ", request_data.get("user_id", None))
         print("practice_id: ", request_data.get("practice_id", None))
+        print("cv_id: ", request_data.get("cv_id", None))
 
         user_id = request_data.get("user_id")
         practice_id = request_data.get("practice_id")
+        cv_id = request_data.get("cv_id")
         
         if not user_id:
             raise HTTPException(status_code=400, detail="user_id es requerido")
@@ -349,10 +352,24 @@ async def match_single_practice(request: Request):
             raise HTTPException(status_code=400, detail="practice_id es requerido")
 
         # Obtener el CV del usuario
-        cv_user = await fetch_user_cv(user_id)
-        
-        if not cv_user:
-            raise HTTPException(status_code=404, detail="No se pudo obtener el CV del usuario. Verifique que el usuario existe y tiene un CV válido.")
+        if cv_id:
+            # Si se proporciona cv_id, obtener ese CV específico
+            print(f"🔍 Obteniendo CV específico con ID: {cv_id}")
+            cv_user = await get_cv_by_id(cv_id)
+            
+            if not cv_user:
+                raise HTTPException(status_code=404, detail=f"CV con ID {cv_id} no encontrado")
+            
+            # Verificar que el CV pertenece al usuario
+            if cv_user.get("userId") != user_id:
+                raise HTTPException(status_code=403, detail="El CV no pertenece al usuario especificado")
+        else:
+            # Si no se proporciona cv_id, usar el CV seleccionado del usuario
+            print(f"🔍 Obteniendo CV seleccionado del usuario: {user_id}")
+            cv_user = await fetch_user_cv(user_id)
+            
+            if not cv_user:
+                raise HTTPException(status_code=404, detail="No se pudo obtener el CV del usuario. Verifique que el usuario existe y tiene un CV válido.")
 
         # Verificar que el CV tenga embeddings
         if not cv_user.get("embeddings", None):
@@ -396,6 +413,8 @@ async def match_single_practice(request: Request):
             "metadata": {
                 "practice_id": practice_id,
                 "user_id": user_id,
+                "cv_id": cv_id if cv_id else cv_user.get("id"),
+                "cv_source": "specific" if cv_id else "selected",
                 "total_time": timing_stats['total_time'],
                 "search_matching_time": timing_stats['search_matching']
             }
