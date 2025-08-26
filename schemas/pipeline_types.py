@@ -30,8 +30,8 @@ class PipelineSections(BaseModel):
 class PipelineConfig(BaseModel):
     """Configuración completa para el pipeline de procesamiento de ofertas laborales"""
     
-    # Configuración de migración (múltiples colecciones)
-    migrations: List[MigrationConfig] = Field(..., description="Lista de migraciones a ejecutar")
+    # Configuración de migración (múltiples colecciones) - Opcional si solo se quieren generar metadata/embeddings
+    migrations: List[MigrationConfig] = Field(default=[], description="Lista de migraciones a ejecutar")
     
     # Configuración de limpieza (múltiples colecciones)
     cleanups: List[CleanupConfig] = Field(default=[], description="Lista de limpiezas a ejecutar")

@@ -52,10 +52,10 @@ Endpoint principal que permite configurar todos los parámetros del pipeline.
 
 | Parámetro | Tipo | Descripción | Valor por Defecto |
 |-----------|------|-------------|-------------------|
-| `migrations` | array | Lista de configuraciones de migración | Requerido |
-| `migrations[].source_collection` | string | Colección fuente de prácticas | Requerido |
-| `migrations[].target_collection` | string | Colección destino para embeddings | Requerido |
-| `migrations[].job_level` | enum | Nivel de trabajo: `practicante`, `analista`, `senior`, `junior` | Requerido |
+| `migrations` | array | Lista de configuraciones de migración | `[]` (Opcional si solo se quieren generar metadata/embeddings) |
+| `migrations[].source_collection` | string | Colección fuente de prácticas | Requerido si hay migraciones |
+| `migrations[].target_collection` | string | Colección destino para embeddings | Requerido si hay migraciones |
+| `migrations[].job_level` | enum | Nivel de trabajo: `practicante`, `analista`, `senior`, `junior` | Requerido si hay migraciones |
 | `sections` | object | Configuración de secciones a ejecutar | `{}` |
 | `sections.enable_migration` | boolean | Ejecutar migración de colecciones | `true` |
 | `sections.enable_metadata` | boolean | Ejecutar generación de metadatos | `true` |
@@ -70,6 +70,10 @@ Endpoint principal que permite configurar todos los parámetros del pipeline.
 | `days_back` | integer | Solo procesar documentos de los últimos N días | `5` |
 
 **Nota:** Los parámetros de rate limiting, batch sizes, delays y logging están configurados internamente con valores optimizados por defecto.
+
+**Comportamiento Inteligente:**
+- Si `enable_migration: false` y no hay migraciones configuradas, el sistema automáticamente asume que se refiere a `practicas_embeddings_test` para metadata y embeddings
+- Esto permite generar metadata y embeddings sin necesidad de configurar migraciones
 
 
 
@@ -342,6 +346,7 @@ curl -X POST "http://localhost:8000/process-jobs-pipeline" \
 ### Caso 6: Solo Metadatos y Embeddings
 - Saltar la migración y ejecutar solo procesamiento
 - Útil cuando los datos ya están migrados
+- **Nuevo:** No requiere configuración de migraciones, automáticamente usa `practicas_embeddings_test`
 
 ### Caso 7: Múltiples Colecciones
 - Procesar múltiples fuentes de datos en una sola ejecución
@@ -374,7 +379,27 @@ curl -X POST "http://localhost:8000/process-jobs-pipeline" \
   }'
 ```
 
-### Solo Metadatos y Embeddings
+### Solo Metadatos y Embeddings (Nuevo - Sin migraciones)
+```bash
+curl -X POST "http://localhost:8000/process-jobs-pipeline" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sections": {
+      "enable_migration": false,
+      "enable_metadata": true,
+      "enable_embeddings": true,
+      "enable_cache_clear": false,
+      "enable_cleanup": false
+    },
+    "overwrite_metadata": false,
+    "overwrite_embeddings": false,
+    "days_back": 5
+  }'
+```
+
+**Nota:** En este caso, el sistema automáticamente asume que se refiere a `practicas_embeddings_test` sin necesidad de configurar migraciones.
+
+### Solo Metadatos y Embeddings (Formato anterior)
 ```bash
 curl -X POST "http://localhost:8000/process-jobs-pipeline" \
   -H "Content-Type: application/json" \

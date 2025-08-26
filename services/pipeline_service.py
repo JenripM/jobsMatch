@@ -110,9 +110,17 @@ class PipelineService:
         try:
             self.log("🚀 Iniciando pipeline de procesamiento de ofertas laborales", self.DEFAULT_VERBOSE)
             self.log(f"📁 Configuración:", self.DEFAULT_VERBOSE)
-            self.log(f"   - Migraciones: {len(config.migrations)}", self.DEFAULT_VERBOSE)
-            for i, migration in enumerate(config.migrations, 1):
-                self.log(f"     {i}. {migration.source_collection} → {migration.target_collection} ({migration.job_level.value})", self.DEFAULT_VERBOSE)
+            
+            # Mostrar información de migraciones
+            if config.migrations:
+                self.log(f"   - Migraciones: {len(config.migrations)}", self.DEFAULT_VERBOSE)
+                for i, migration in enumerate(config.migrations, 1):
+                    self.log(f"     {i}. {migration.source_collection} → {migration.target_collection} ({migration.job_level.value})", self.DEFAULT_VERBOSE)
+            else:
+                self.log(f"   - Migraciones: Ninguna configurada", self.DEFAULT_VERBOSE)
+                if config.sections.enable_metadata or config.sections.enable_embeddings:
+                    self.log(f"     → Procesando colección por defecto: practicas_embeddings_test", self.DEFAULT_VERBOSE)
+            
             self.log(f"   - Secciones habilitadas:", self.DEFAULT_VERBOSE)
             self.log(f"     - Migración: {config.sections.enable_migration}", self.DEFAULT_VERBOSE)
             self.log(f"     - Metadatos: {config.sections.enable_metadata}", self.DEFAULT_VERBOSE)
@@ -128,6 +136,16 @@ class PipelineService:
             
             # Paso 1: Migración de colecciones (múltiples)
             if config.sections.enable_migration:
+                if not config.migrations:
+                    self.log("\n❌ PASO 1: Migración habilitada pero no hay migraciones configuradas", self.DEFAULT_VERBOSE)
+                    steps["migration"] = PipelineStep(
+                        step_name="Migración de colecciones",
+                        status="error",
+                        duration=0.0,
+                        details={"reason": "Migración habilitada pero no hay migraciones configuradas"}
+                    )
+                    raise Exception("Migración habilitada pero no hay migraciones configuradas")
+                
                 step1_start = time.time()
                 self.log("\n📝 PASO 1: Migrando colecciones...", self.DEFAULT_VERBOSE)
                 
@@ -200,8 +218,14 @@ class PipelineService:
                 total_skipped = 0
                 total_errors = 0
                 
-                # Obtener todas las colecciones destino únicas
-                target_collections = list(set([migration.target_collection for migration in config.migrations]))
+                # Determinar colecciones a procesar
+                if config.sections.enable_migration:
+                    # Si hay migración, usar las colecciones destino de las migraciones
+                    target_collections = list(set([migration.target_collection for migration in config.migrations]))
+                else:
+                    # Si no hay migración, asumir que se refiere a practicas_embeddings_test
+                    target_collections = ["practicas_embeddings_test"]
+                    self.log(f"   📝 Sin migración configurada, procesando colección por defecto: {target_collections[0]}", self.DEFAULT_VERBOSE)
                 
                 for i, target_collection in enumerate(target_collections, 1):
                     self.log(f"   Procesando colección {i}/{len(target_collections)}: {target_collection}", self.DEFAULT_VERBOSE)
@@ -266,8 +290,14 @@ class PipelineService:
                 total_skipped = 0
                 total_errors = 0
                 
-                # Obtener todas las colecciones destino únicas
-                target_collections = list(set([migration.target_collection for migration in config.migrations]))
+                # Determinar colecciones a procesar
+                if config.sections.enable_migration:
+                    # Si hay migración, usar las colecciones destino de las migraciones
+                    target_collections = list(set([migration.target_collection for migration in config.migrations]))
+                else:
+                    # Si no hay migración, asumir que se refiere a practicas_embeddings_test
+                    target_collections = ["practicas_embeddings_test"]
+                    self.log(f"   🧠 Sin migración configurada, procesando colección por defecto: {target_collections[0]}", self.DEFAULT_VERBOSE)
                 
                 for i, target_collection in enumerate(target_collections, 1):
                     self.log(f"   Procesando colección {i}/{len(target_collections)}: {target_collection}", self.DEFAULT_VERBOSE)
