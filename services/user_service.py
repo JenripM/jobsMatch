@@ -1127,3 +1127,216 @@ async def get_cv_by_id(cv_id: str) -> Dict[str, Any]:
     except Exception as e:
         print(f"❌ Error en get_cv_by_id: {e}")
         raise
+
+async def adapt_cv_summary_for_job(original_cv: Dict[str, Any], job_context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Adapta el resumen ejecutivo de un CV para una oferta laboral específica usando Gemini.
+    
+    Args:
+        original_cv: CV original con todos sus datos
+        job_context: Contexto de la oferta laboral con jobTitle, company, description
+        
+    Returns:
+        Dict con el CV adaptado y metadatos del proceso
+    """
+    total_start_time = time.time()
+    timing_stats = {}
+    
+    try:
+        print(f"🚀 Iniciando adaptación de resumen ejecutivo para oferta: {job_context.get('jobTitle', 'N/A')}")
+        print(f"   📄 CV original: {original_cv.get('title', 'Sin título')}")
+        
+        # 1. Construir el prompt de adaptación
+        prompt_start = time.time()
+        adaptation_prompt = build_adaptation_prompt(original_cv, job_context)
+        prompt_time = time.time() - prompt_start
+        timing_stats['prompt_preparation'] = prompt_time
+        print(f"   ⏱️ Preparación del prompt: {prompt_time:.4f}s")
+        
+        # 2. Generar resumen adaptado con Gemini
+        ai_start = time.time()
+        print("🤖 Generando resumen adaptado con Gemini...")
+        
+        try:
+            response = await llm.ainvoke(adaptation_prompt)
+            adapted_summary = response.content.strip()
+            
+            # Limpiar la respuesta de posibles caracteres extra
+            import re
+            adapted_summary = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', adapted_summary)
+            adapted_summary = re.sub(r'^["\']|["\']$', '', adapted_summary)  # Remover comillas si las hay
+            
+        except Exception as ai_error:
+            print(f"❌ Error en la generación con Gemini: {ai_error}")
+            raise Exception(f"Error al generar resumen adaptado: {str(ai_error)}")
+        
+        ai_time = time.time() - ai_start
+        timing_stats['ai_generation'] = ai_time
+        print(f"   ⏱️ Generación con IA: {ai_time:.4f}s")
+        print(f"   📝 Resumen adaptado: {adapted_summary[:100]}...")
+        
+        # 3. Crear CV adaptado manteniendo embeddings originales
+        cv_prep_start = time.time()
+        
+        # Crear copia del CV original
+        adapted_cv = {
+            **original_cv,
+            "data": {
+                **original_cv.get("data", {}),
+                "personalInfo": {
+                    **original_cv.get("data", {}).get("personalInfo", {}),
+                    "summary": adapted_summary  # Solo actualizar el resumen
+                }
+            }
+        }
+        
+        # Mantener los embeddings originales (no recalcular)
+        adapted_cv["embeddings"] = original_cv.get("embeddings")
+        
+        # Generar nuevo PDF ya que el resumen cambió
+        pdf_start = time.time()
+        print("📄 Generando nuevo PDF con resumen adaptado...")
+        
+        try:
+            from services.pdf_generator_service import CVPDFGenerator
+            
+            # Generar PDF a partir del cvData adaptado
+            pdf_content, pdf_file_name = CVPDFGenerator.generate_pdf_from_cv_data(adapted_cv["data"])
+            
+            # Subir nuevo PDF a R2
+            new_file_url = await r2_storage.upload_file_to_r2(
+                file_data=pdf_content,
+                file_name=pdf_file_name,
+                content_type="application/pdf",
+                prefix="cv"
+            )
+            
+            # Actualizar fileUrl en el CV adaptado
+            adapted_cv["fileUrl"] = new_file_url
+            
+            pdf_time = time.time() - pdf_start
+            timing_stats['pdf_generation'] = pdf_time
+            print(f"   ⏱️ Generación y subida de PDF: {pdf_time:.4f}s")
+            print(f"   🔗 URL del nuevo PDF: {new_file_url}")
+            
+        except Exception as pdf_error:
+            print(f"   ⚠️ Error generando PDF (continuando sin fileUrl): {pdf_error}")
+            # No fallar el proceso completo, continuar sin fileUrl
+            adapted_cv["fileUrl"] = None
+            timing_stats['pdf_generation'] = 0.0
+        
+        cv_prep_time = time.time() - cv_prep_start
+        timing_stats['cv_preparation'] = cv_prep_time
+        print(f"   ⏱️ Preparación del CV adaptado: {cv_prep_time:.4f}s")
+        
+        # 4. Guardar CV adaptado en la base de datos
+        db_start = time.time()
+        print("💾 Guardando CV adaptado en la base de datos...")
+        
+        # Preparar documento para Firestore
+        now = datetime.now()
+        adapted_cv["createdAt"] = now
+        adapted_cv["updatedAt"] = now
+        adapted_cv["title"] = f"CV adaptado - {job_context.get('jobTitle', 'Oferta')}"
+        adapted_cv["template"] = original_cv.get("template", "harvard")
+        adapted_cv["userId"] = original_cv.get("userId")
+        
+        # Remover campos que no deben ir a la base de datos
+        adapted_cv.pop("id", None)  # No incluir el ID del CV original
+        
+        # Guardar en Firestore
+        doc_ref = db_users.collection("userCVs").document()
+        doc_ref.set(adapted_cv)
+        
+        db_time = time.time() - db_start
+        timing_stats['database_save'] = db_time
+        print(f"   ⏱️ Guardado en base de datos: {db_time:.4f}s")
+        print(f"   🆔 ID del CV adaptado: {doc_ref.id}")
+        
+        # 5. Preparar respuesta
+        response_start = time.time()
+        
+        total_time = time.time() - total_start_time
+        timing_stats['total_time'] = total_time
+        
+        response = {
+            "success": True,
+            "adapted_cv_id": doc_ref.id
+        }
+        
+        response_time = time.time() - response_start
+        timing_stats['response_preparation'] = response_time
+        
+        print(f"✅ CV adaptado exitosamente con ID: {doc_ref.id}")
+        print(f"🎯 TIEMPO TOTAL: {total_time:.4f}s")
+        print(f"📊 ESTADÍSTICAS DE TIEMPO:")
+        print(f"   - Preparación prompt: {timing_stats['prompt_preparation']:.4f}s")
+        print(f"   - Generación IA: {timing_stats['ai_generation']:.4f}s")
+        print(f"   - Preparación CV: {timing_stats['cv_preparation']:.4f}s")
+        print(f"   - Generación PDF: {timing_stats['pdf_generation']:.4f}s")
+        print(f"   - Guardado BD: {timing_stats['database_save']:.4f}s")
+        print(f"   - Preparación respuesta: {timing_stats['response_preparation']:.4f}s")
+        print(f"   - 🎆 TOTAL: {timing_stats['total_time']:.4f}s")
+        
+        return response
+        
+    except Exception as e:
+        total_time = time.time() - total_start_time
+        print(f"❌ Error al adaptar CV después de {total_time:.4f}s: {e}")
+        raise Exception(f"Error al adaptar CV: {str(e)}")
+
+
+def build_adaptation_prompt(original_cv: Dict[str, Any], job_context: Dict[str, Any]) -> str:
+    """
+    Construye el prompt para adaptar el resumen ejecutivo de un CV.
+    
+    Args:
+        original_cv: CV original con todos sus datos
+        job_context: Contexto de la oferta laboral
+        
+    Returns:
+        str: Prompt formateado para Gemini
+    """
+    # Extraer información del CV
+    cv_data = original_cv.get("data", {})
+    personal_info = cv_data.get("personalInfo", {})
+    work_experience = cv_data.get("workExperience", [])
+    skills = cv_data.get("skills", [])
+    education = cv_data.get("education", [])
+    
+    # Construir el prompt
+    prompt = f"""
+GENERA UN RESUMEN EJECUTIVO SUTIL Y NATURAL
+
+CONTEXTO DEL PUESTO:
+- Título: {job_context.get('jobTitle', 'No especificado')}
+- Empresa: {job_context.get('company', 'No especificada')}
+- Descripción: {job_context.get('description', 'No disponible')}
+
+INFORMACIÓN DEL CV:
+- Resumen actual: {personal_info.get('summary', 'No tiene resumen')}
+- Experiencia laboral: {len(work_experience)} posiciones
+- Habilidades principales: {', '.join([s.get('name', '') for s in skills[:5]]) if skills else 'No especificadas'}
+- Educación: {', '.join([e.get('degree', '') for e in education]) if education else 'No especificada'}
+
+INSTRUCCIONES CRÍTICAS:
+Genera un resumen ejecutivo (2-3 líneas) que sea:
+1. NATURAL Y SUTIL: No menciones explícitamente el puesto, empresa o que estás "aplicando"
+2. ENFOQUE EN HABILIDADES: Destaca las habilidades del CV que son más relevantes para este tipo de posición
+3. EXPERIENCIA REAL: Solo menciona experiencia y logros que estén realmente en el CV
+4. LENGUAJE PROFESIONAL: Usa un tono profesional pero no excesivamente formal
+5. CONCISO: Máximo 3 líneas, enfocado en lo más importante
+
+REGLAS IMPORTANTES:
+- NO menciones la empresa objetivo
+- NO seas descarado o obvio en la adaptación
+- Solo destaca lo que YA TIENES que sea relevante para este tipo de posición
+
+FORMATO DE SALIDA:
+Responde ÚNICAMENTE con el texto del resumen ejecutivo, sin comillas ni formato adicional.
+
+Ejemplo de salida sutil:
+Desarrollador con experiencia en múltiples tecnologías web y automatización de procesos. He trabajado en proyectos que optimizaron flujos de trabajo y desarrollé soluciones que mejoraron la eficiencia operacional. Conocimientos sólidos en desarrollo de aplicaciones y integración de sistemas.
+"""
+    
+    return prompt

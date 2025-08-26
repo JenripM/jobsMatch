@@ -40,6 +40,7 @@ from services.user_service import (
     upload_cv_to_database,
     delete_cv as delete_cv_service,
     get_cv_by_id,
+    adapt_cv_summary_for_job,
 )
 from services.cache_service import (
     get_cached_matches,
@@ -671,6 +672,107 @@ async def process_jobs_pipeline(config: PipelineConfig):
         import traceback
         print(f"   Stack trace: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error interno del pipeline: {str(e)}")
+
+
+@app.post("/adapt-cv-summary")
+async def adapt_cv_summary(request: Request):
+    """
+    Endpoint para adaptar el resumen ejecutivo de un CV para una oferta laboral específica.
+    
+    Este endpoint toma un CV existente y genera una versión adaptada con un resumen ejecutivo
+    optimizado para la oferta laboral, manteniendo todos los demás datos del CV original.
+    
+    Args:
+        request: Request con JSON body que debe contener:
+            - user_id: ID del usuario propietario del CV
+            - cv_id: ID del CV original a adaptar (opcional, si no se proporciona usa el CV seleccionado)
+            - job_context: Contexto de la oferta laboral con:
+                - jobTitle: Título del puesto
+                - company: Nombre de la empresa
+                - description: Descripción del puesto (opcional)
+                - requirements: Requisitos del puesto (opcional)
+    
+    Returns:
+        dict: Respuesta con el ID del CV adaptado
+        {
+            "success": true,
+            "adapted_cv_id": "string"
+        }
+    """
+    # Iniciar medición de tiempo total
+    start_total = time.time()
+    timing_stats = {}
+    
+    try:
+        # Leer el body del request y parsear JSON
+        body = await request.body()
+        request_data = json.loads(body)
+        
+        print("------ Inputs ------ ")
+        print("user_id: ", request_data.get("user_id", None))
+        print("cv_id: ", request_data.get("cv_id", None))
+        print("job_context: ", request_data.get("job_context", {}))
+
+        user_id = request_data.get("user_id")
+        cv_id = request_data.get("cv_id")
+        job_context = request_data.get("job_context", {})
+        
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id es requerido")
+        
+        if not job_context:
+            raise HTTPException(status_code=400, detail="job_context es requerido")
+        
+        if not job_context.get("jobTitle"):
+            raise HTTPException(status_code=400, detail="job_context.jobTitle es requerido")
+        
+        # company es opcional, no validamos
+        
+        if not cv_id:
+            raise HTTPException(status_code=400, detail="cv_id es requerido")
+
+        # Obtener el CV original
+        if not cv_id:
+            raise HTTPException(status_code=400, detail="cv_id es requerido")
+            
+        print(f"🔍 Obteniendo CV específico con ID: {cv_id}")
+        original_cv = await get_cv_by_id(cv_id)
+        
+        if not original_cv:
+            raise HTTPException(status_code=404, detail="CV no encontrado")
+            
+        # Verificar que el CV pertenece al usuario
+        if original_cv.get("userId") != user_id:
+            raise HTTPException(status_code=403, detail="El CV no pertenece al usuario especificado")
+
+        # Verificar que el CV tenga datos estructurados
+        if not original_cv.get("data"):
+            raise HTTPException(status_code=400, detail="El CV no tiene datos estructurados para adaptar")
+
+        # Verificar que el CV tenga embeddings (necesarios para mantener la funcionalidad de matching)
+        if not original_cv.get("embeddings"):
+            raise HTTPException(status_code=400, detail="El CV no tiene embeddings. Debe tener embeddings para poder adaptarlo")
+
+        # Adaptar el CV usando el servicio
+        result = await adapt_cv_summary_for_job(original_cv, job_context)
+        
+        # Calcular tiempo total
+        timing_stats['total_time'] = time.time() - start_total
+        
+        print(f"\n⏱️ ESTADÍSTICAS DE TIEMPO:")
+        print(f"   - 🎆 TIEMPO TOTAL: {timing_stats['total_time']:.4f}s")
+        
+        return result
+            
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Error al parsear JSON")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error en adapt_cv_summary: {e}")
+        import traceback
+        print(f"   Stack trace: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
 
