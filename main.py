@@ -560,12 +560,12 @@ async def list_user_cvs(user_id: str):
     """
     Obtiene todos los CVs de un usuario.
     """
-    print(f"🚀 GET /user-cvs/{user_id}")
+    #print(f"🚀 GET /user-cvs/{user_id}")
 
     try:
         cvs = await get_user_cvs_service(user_id)
 
-        print(f"✅ CVs obtenidos: {len(cvs)} CVs encontrados")
+        #print(f"✅ CVs obtenidos: {len(cvs)} CVs encontrados")
         return {
             "success": True,
             "user_id": user_id,

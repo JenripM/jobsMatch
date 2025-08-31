@@ -26,12 +26,17 @@ def normalize_cosine_similarity(similarity: float, min_sim: float = 0.87, max_si
         Porcentaje normalizado (0-100)
     """
     if similarity <= min_sim:
-        return 0.2
+        return 0.1
     if similarity >= max_sim:
-        return 99.0
+        return 97.0
     
     # Normalización lineal: (s - min) / (max - min) * 100
-    return ((similarity - min_sim) / (max_sim - min_sim)) * 100.0
+    similarity = ((similarity - min_sim) / (max_sim - min_sim)) * 100.0
+    if similarity < 1.0:
+        return 1.0
+    elif similarity > 97.0:
+        return 97.0
+    return similarity
 
 def normalize_similarity_by_aspect(aspect_name: str, similarity: float) -> float:
     """Normalización unificada con parámetros específicos por aspecto"""
@@ -40,7 +45,9 @@ def normalize_similarity_by_aspect(aspect_name: str, similarity: float) -> float
         normalized = normalize_cosine_similarity(similarity, min_sim=0.8, max_sim=1)
     elif aspect_name == 'sector_affinity':
         # Sector affinity: parámetros intermedios
-        normalized = normalize_cosine_similarity(similarity, min_sim=0.8, max_sim=1)
+        print(f"🔍 sector_affinity before normalize: {similarity:.4f}")
+        normalized = normalize_cosine_similarity(similarity, min_sim=0.875, max_sim=0.895)
+        print(f"🔍 sector_affinity after normalize: {normalized:.4f}")
     else:
         # General: más permisiva
         normalized = normalize_cosine_similarity(similarity, min_sim=0.8, max_sim=1)
@@ -65,10 +72,9 @@ def calculate_total_similarity(hard_skills: float, soft_skills: float, sector_af
     """
     # Pesos unificados para ambos endpoints
     similitud_total = (
-        hard_skills * 0.40 +      # 40% habilidades técnicas
-        soft_skills * 0.10 +      # 10% habilidades blandas
-        sector_affinity * 0.30 +  # 30% afinidad laboral
-        general * 0.20            # 20% evaluación general
+        hard_skills * 0.50 +      # 30% habilidades técnicas
+        sector_affinity * 0.40 +  # 30% afinidad laboral
+        general * 0.10            # 40% evaluación general
     )
     
     return similitud_total
@@ -797,7 +803,9 @@ async def obtener_practica_por_id_y_calcular_match(practica_id: str, cv_embeddin
         # Normalización determinística usando función unificada por aspecto
         sim_requisitos = normalize_similarity_by_aspect('hard_skills', aspect_similarities.get('hard_skills', 0))
         sim_soft_skills = normalize_similarity_by_aspect('soft_skills', aspect_similarities.get('soft_skills', 0))
-        sim_sector = normalize_similarity_by_aspect('sector_affinity', aspect_similarities.get('category', 0))  # category = sector_affinity
+        # Mapear category del CV a sector_affinity para normalización
+        category_similarity = aspect_similarities.get('category', 0)
+        sim_sector = normalize_similarity_by_aspect('sector_affinity', category_similarity)
         sim_general = normalize_similarity_by_aspect('general', aspect_similarities.get('general', 0))
         
         # Usar función unificada para calcular similitud total

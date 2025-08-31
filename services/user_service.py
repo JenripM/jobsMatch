@@ -474,7 +474,7 @@ async def get_user_cvs(user_id: str) -> List[Dict[str, Any]]:
         Lista de CVs del usuario
     """
     start_time = time.time()
-    print(f"📥 Iniciando consulta de CVs para usuario {user_id}")
+    #print(f"📥 Iniciando consulta de CVs para usuario {user_id}")
     
     try:
         # Consultar CVs en Firestore
@@ -482,7 +482,7 @@ async def get_user_cvs(user_id: str) -> List[Dict[str, Any]]:
         cvs_ref = db_users.collection("userCVs").where("userId", "==", user_id)
         docs = cvs_ref.stream()
         query_time = time.time() - query_start
-        print(f"   ⏱️ Consulta en Firestore: {query_time:.4f}s")
+        #print(f"   ⏱️ Consulta en Firestore: {query_time:.4f}s")
         
         # Procesar documentos
         process_start = time.time()
@@ -494,15 +494,16 @@ async def get_user_cvs(user_id: str) -> List[Dict[str, Any]]:
             cv_data["embeddings"] = None
             cvs.append(cv_data)
         process_time = time.time() - process_start
-        print(f"   ⏱️ Procesamiento de documentos: {process_time:.4f}s")
+        #print(f"   ⏱️ Procesamiento de documentos: {process_time:.4f}s")
         
         total_time = time.time() - start_time
+        """
         print(f"✅ Consulta completada en {total_time:.4f}s")
         print(f"   📊 CVs encontrados: {len(cvs)}")
         print(f"   📈 Tiempos desglosados:")
         print(f"      - Consulta: {query_time:.4f}s")
         print(f"      - Procesamiento: {process_time:.4f}s")
-        
+        """
         return cvs
         
     except Exception as e:
@@ -530,20 +531,20 @@ async def fetch_user_cv(user_id: str) -> Dict[str, Any]:
 
         # Convertir el documento a diccionario
         user_data = user_doc.to_dict()
-        print("Obteniendo datos del usuario: ", user_data.get("displayName", None))
+        #print("Obteniendo datos del usuario: ", user_data.get("displayName", None))
         cvSelectedId = user_data.get("cvSelectedId", None)
-        print("cvSelectedId: ", cvSelectedId)
+        #print("cvSelectedId: ", cvSelectedId)
 
         if cvSelectedId:
-            print(f"Buscando CV con ID específico: {cvSelectedId}")
+            #print(f"Buscando CV con ID específico: {cvSelectedId}")
             cv_doc = db_users.collection("userCVs").document(cvSelectedId).get()
-            print(f"CV encontrado: {cv_doc.exists}")
+            #print(f"CV encontrado: {cv_doc.exists}")
         else:
             # Si el usuario no tiene un cvSelectedId, tomar cualquier CV disponible
-            print("El usuario no cuenta con el campo cvSelectedId. Seleccionando cualquier CV disponible...")
+            #print("El usuario no cuenta con el campo cvSelectedId. Seleccionando cualquier CV disponible...")
             cv_query = db_users.collection("userCVs").where("userId", "==", user_id).get()
             
-            print(f"Resultados de la query: {len(cv_query) if cv_query else 0}")
+            #print(f"Resultados de la query: {len(cv_query) if cv_query else 0}")
             
             if not cv_query or len(cv_query) == 0:
                 raise ValueError(f"El usuario {user_id} no tiene ningún CV en la base de datos")
@@ -551,17 +552,17 @@ async def fetch_user_cv(user_id: str) -> Dict[str, Any]:
             # Tomar el primer CV disponible (sin ordenar)
             cv_doc = cv_query[0]
             cvSelectedId = cv_doc.id
-            print(f"CV seleccionado automáticamente con ID: {cvSelectedId}")
+            #print(f"CV seleccionado automáticamente con ID: {cvSelectedId}")
 
         if not cv_doc.exists:
-            print(f"❌ CV con ID {cvSelectedId} no existe en la base de datos")
+            #print(f"❌ CV con ID {cvSelectedId} no existe en la base de datos")
             raise ValueError(f"CV con ID {cvSelectedId} no encontrado en la base de datos")
         
         # Convertir el documento a diccionario
         cv = cv_doc.to_dict()
         # Agregar el ID del documento al CV
         cv["id"] = cv_doc.id
-        print(f"✅ CV encontrado exitosamente: {cv.get('title', 'Sin título')}")
+        #print(f"✅ CV encontrado exitosamente: {cv.get('title', 'Sin título')}")
         return cv
         
     except Exception as e:
