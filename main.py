@@ -267,11 +267,15 @@ async def match_practices(request: Request):
         
         # Usar siempre streaming puro sin compresión
         if STREAMING_ENABLED and len(practicas_con_similitud) > 0:
-            print(f"📡 Usando STREAMING PURO - {len(practicas_con_similitud)} prácticas")
+            # Aplicar límite también en streaming
+            limit = request_data.get("limit", DEFAULT_PRACTICES_LIMIT)
+            practicas_limitadas = practicas_con_similitud[:limit]
+            
+            print(f"📡 Usando STREAMING PURO - {len(practicas_limitadas)} prácticas (limitadas de {len(practicas_con_similitud)} total)")
             
             # Retornar StreamingResponse sin compresión
             return StreamingResponse(
-                generate_ndjson_streaming_practices(practicas_con_similitud, timing_stats),
+                generate_ndjson_streaming_practices(practicas_limitadas, timing_stats),
                 media_type="application/x-ndjson",
                 headers={
                     "Content-Type": "application/x-ndjson",

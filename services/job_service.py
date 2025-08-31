@@ -37,13 +37,41 @@ def normalize_similarity_by_aspect(aspect_name: str, similarity: float) -> float
     """Normalización unificada con parámetros específicos por aspecto"""
     if aspect_name in ['hard_skills', 'soft_skills']:
         # Habilidades técnicas y blandas: más estrictas
-        return normalize_cosine_similarity(similarity, min_sim=0.83, max_sim=0.95)
+        normalized = normalize_cosine_similarity(similarity, min_sim=0.8, max_sim=1)
     elif aspect_name == 'sector_affinity':
         # Sector affinity: parámetros intermedios
-        return normalize_cosine_similarity(similarity, min_sim=0.85, max_sim=0.93)
+        normalized = normalize_cosine_similarity(similarity, min_sim=0.8, max_sim=1)
     else:
         # General: más permisiva
-        return normalize_cosine_similarity(similarity, min_sim=0.85, max_sim=0.98)
+        normalized = normalize_cosine_similarity(similarity, min_sim=0.8, max_sim=1)
+    
+    # Aplicar límite mínimo de 1%
+    return max(1.0, normalized)
+
+def calculate_total_similarity(hard_skills: float, soft_skills: float, sector_affinity: float, general: float) -> float:
+    """
+    Función unificada para calcular la similitud total ponderada.
+    Usada tanto en buscar_practicas_afines como en obtener_practica_por_id_y_calcular_match
+    para garantizar consistencia.
+    
+    Args:
+        hard_skills: Similitud normalizada de habilidades técnicas (0-100)
+        soft_skills: Similitud normalizada de habilidades blandas (0-100)
+        sector_affinity: Similitud normalizada de afinidad sectorial (0-100)
+        general: Similitud normalizada general (0-100)
+    
+    Returns:
+        float: Similitud total ponderada (0-100)
+    """
+    # Pesos unificados para ambos endpoints
+    similitud_total = (
+        hard_skills * 0.40 +      # 40% habilidades técnicas
+        soft_skills * 0.10 +      # 10% habilidades blandas
+        sector_affinity * 0.30 +  # 30% afinidad laboral
+        general * 0.20            # 20% evaluación general
+    )
+    
+    return similitud_total
 
 def normalize_list_cosine(similarities: list[float]) -> list[float]:
     """Normaliza una lista de similitudes coseno usando la función lineal"""
@@ -322,12 +350,12 @@ async def buscar_practicas_afines(percentage_threshold: float = 0, sinceDays: in
             sim_sector = normalized_scores['sector_affinity'][i]
             sim_general = normalized_scores['general'][i]
             
-            # Calcular similitud total con pesos específicos usando puntajes normalizados
-            similitud_total = (
-                sim_requisitos * 0.30 +    # 30% habilidades técnicas
-                sim_soft_skills * 0.10 +   # 10% habilidades blandas
-                sim_sector * 0.40 +        # 40% afinidad laboral
-                sim_general * 0.20         # 20% evaluación general
+            # Calcular similitud total usando función unificada
+            similitud_total = calculate_total_similarity(
+                hard_skills=sim_requisitos,
+                soft_skills=sim_soft_skills,
+                sector_affinity=sim_sector,
+                general=sim_general
             )
 
             #no incluir practicas por debajo del porcentaje_minimo_aceptado
@@ -772,12 +800,12 @@ async def obtener_practica_por_id_y_calcular_match(practica_id: str, cv_embeddin
         sim_sector = normalize_similarity_by_aspect('sector_affinity', aspect_similarities.get('category', 0))  # category = sector_affinity
         sim_general = normalize_similarity_by_aspect('general', aspect_similarities.get('general', 0))
         
-        # Usar exactamente los mismos pesos que en match-practices
-        similitud_total = (
-            sim_requisitos * 0.40 +    # 40% habilidades técnicas
-            sim_soft_skills * 0.10 +   # 10% habilidades blandas
-            sim_sector * 0.30 +        # 30% afinidad laboral
-            sim_general * 0.20         # 20% evaluación general
+        # Usar función unificada para calcular similitud total
+        similitud_total = calculate_total_similarity(
+            hard_skills=sim_requisitos,
+            soft_skills=sim_soft_skills,
+            sector_affinity=sim_sector,
+            general=sim_general
         )
         
         step3_time = time.time() - step3_start

@@ -39,7 +39,7 @@ DEFAULT_PERCENTAGE_THRESHOLD = float(os.getenv("DEFAULT_PERCENTAGE_THRESHOLD", "
 # =============================
 
 # Límite por defecto de prácticas a devolver
-DEFAULT_PRACTICES_LIMIT = int(os.getenv("DEFAULT_PRACTICES_LIMIT", "100"))
+DEFAULT_PRACTICES_LIMIT = int(os.getenv("DEFAULT_PRACTICES_LIMIT", "1000"))
 
 # =============================
 # CONFIGURACIÓN DE LOGGING
