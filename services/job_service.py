@@ -124,7 +124,7 @@ async def buscar_practicas_afines(percentage_threshold: float = 0, sinceDays: in
         # 2. Ejecutar búsquedas vectoriales en paralelo para cada aspecto
         print(f"⏱️  Paso 2: Ejecutando búsquedas vectoriales en paralelo...")
         step2_start = time.time()
-        practicas_ref = db_jobs.collection("practicas_embeddings_test")
+        practicas_ref = db_jobs.collection("practicas")
         
         def search_aspect_sync(aspect_name, cv_embedding):
             """Función auxiliar para buscar por un aspecto específico (síncrona)"""
@@ -431,7 +431,7 @@ async def buscar_practicas_afines(percentage_threshold: float = 0, sinceDays: in
 
 
 def obtener_practicas():
-    practicas_ref = db_jobs.collection('practicas_embeddings_test')
+    practicas_ref = db_jobs.collection('practicas')
     practicas = practicas_ref.stream()
     practicas_data = []
     for practica in practicas:
@@ -454,7 +454,7 @@ def obtener_practicas_recientes():
     # ANTES: Traía todas las prácticas y filtraba en memoria
     # AHORA: Filtra directamente en la query de Firestore
     try:
-        practicas_ref = db_jobs.collection('practicas_embeddings_test').where('fecha_agregado', '>=', fecha_limite)
+        practicas_ref = db_jobs.collection('practicas').where('fecha_agregado', '>=', fecha_limite)
         practicas = practicas_ref.stream()
         
         practicas_recientes = []
@@ -725,7 +725,7 @@ async def obtener_practica_por_id_y_calcular_match(practica_id: str, cv_embeddin
         print(f"⏱️  Paso 1: Obteniendo práctica por ID...")
         step1_start = time.time()
         
-        practicas_ref = db_jobs.collection("practicas_embeddings_test")
+        practicas_ref = db_jobs.collection("practicas")
         doc_ref = practicas_ref.document(practica_id)
         doc = doc_ref.get()
         

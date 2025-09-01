@@ -22,10 +22,10 @@ from google.cloud.firestore_v1.vector import Vector
 # aiplatform.init(project='YOUR_PROJECT_ID', location='us-central1')
 
 """
-recordar generar el índice vectorial en Firestore para la colección 'practicas_embeddings_test'. Solo es necesario una vez por collection, debera volverse a ejecutar si se muda de colección o cuenta gcp:
+recordar generar el índice vectorial en Firestore para la colección 'practicas'. Solo es necesario una vez por collection, debera volverse a ejecutar si se muda de colección o cuenta gcp:
 ejecutamos el siguiente codigo en GOOGLE SHELL!:
 gcloud alpha firestore indexes composite create \
-  --collection-group=practicas_embeddings_test \
+  --collection-group=practicas \
   --query-scope=COLLECTION \
   --field-config='field-path=embedding,vector-config={"dimension": "2048", "flat": {}}' \
   --project=jobs-update-e3e63
@@ -184,4 +184,4 @@ async def generate_embeddings_for_collection(collection_name=None, overwrite_exi
 
 # --- Punto de entrada principal para ejecutar el script ---
 if __name__ == "__main__":
-    asyncio.run(generate_embeddings_for_collection(collection_name="practicas_embeddings_test", overwrite_existing=False))
+    asyncio.run(generate_embeddings_for_collection(collection_name="practicas", overwrite_existing=False))

@@ -64,7 +64,7 @@ def parse_date_field(fecha_value) -> datetime:
         raise ValueError(f"No se pudo procesar el tipo de fecha: {type(fecha_value)} - {fecha_value}")
 
 async def main():
-    await migrate_collections("practicas", "practicas_embeddings_test", "practicante")
+    #await migrate_collections("practicas", "practicas_embeddings_test", "practicante")
     
 async def migrate_collections(source: str, target: str, job_level: str, days_back: int = 5):
     """

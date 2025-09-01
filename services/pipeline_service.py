@@ -119,7 +119,7 @@ class PipelineService:
             else:
                 self.log(f"   - Migraciones: Ninguna configurada", self.DEFAULT_VERBOSE)
                 if config.sections.enable_metadata or config.sections.enable_embeddings:
-                    self.log(f"     → Procesando colección por defecto: practicas_embeddings_test", self.DEFAULT_VERBOSE)
+                    self.log(f"     → Procesando colección por defecto: practicas", self.DEFAULT_VERBOSE)
             
             self.log(f"   - Secciones habilitadas:", self.DEFAULT_VERBOSE)
             self.log(f"     - Migración: {config.sections.enable_migration}", self.DEFAULT_VERBOSE)
@@ -223,8 +223,8 @@ class PipelineService:
                     # Si hay migración, usar las colecciones destino de las migraciones
                     target_collections = list(set([migration.target_collection for migration in config.migrations]))
                 else:
-                    # Si no hay migración, asumir que se refiere a practicas_embeddings_test
-                    target_collections = ["practicas_embeddings_test"]
+                    # Si no hay migración, asumir que se refiere a practicas
+                    target_collections = ["practicas"]
                     self.log(f"   📝 Sin migración configurada, procesando colección por defecto: {target_collections[0]}", self.DEFAULT_VERBOSE)
                 
                 for i, target_collection in enumerate(target_collections, 1):
@@ -295,8 +295,8 @@ class PipelineService:
                     # Si hay migración, usar las colecciones destino de las migraciones
                     target_collections = list(set([migration.target_collection for migration in config.migrations]))
                 else:
-                    # Si no hay migración, asumir que se refiere a practicas_embeddings_test
-                    target_collections = ["practicas_embeddings_test"]
+                    # Si no hay migración, asumir que se refiere a practicas
+                    target_collections = ["practicas"]
                     self.log(f"   🧠 Sin migración configurada, procesando colección por defecto: {target_collections[0]}", self.DEFAULT_VERBOSE)
                 
                 for i, target_collection in enumerate(target_collections, 1):
