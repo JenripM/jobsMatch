@@ -536,7 +536,7 @@ async def update_user_cv(cv_id: str, cv: dict):
         # Mostrar información sobre lo que se hizo
         if result.get("embeddings_generated"):
             if result.get("data_changed"):
-                print(f"🔄 CV actualizado con nuevos embeddings y PDF (data cambió): {result['cv_id']}")
+                print(f"🔄 CV actualizado con nuevos embeddings y PDF (data cambió). cv_id: {result['cv_id']}")
             else:
                 print(f"🔍 CV actualizado con nuevos embeddings (no tenía): {result['cv_id']}")
         else:

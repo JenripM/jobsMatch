@@ -18,6 +18,32 @@ class CVPDFGenerator:
     """Generador de PDFs para CVs usando plantilla Harvard"""
     
     @staticmethod
+    def _format_technologies(technologies) -> str:
+        """
+        Formatea tecnologías manejando tanto listas como strings.
+        
+        Args:
+            technologies: Lista de tecnologías o string con tecnologías separadas por comas
+            
+        Returns:
+            str: Tecnologías formateadas como string separado por comas
+        """
+        if not technologies:
+            return ""
+        
+        # Si es string, dividir por comas y limpiar espacios
+        if isinstance(technologies, str):
+            tech_list = [tech.strip() for tech in technologies.split(',') if tech.strip()]
+            return ', '.join(tech_list)
+        
+        # Si es lista, unir directamente
+        if isinstance(technologies, list):
+            return ', '.join(str(tech) for tech in technologies if tech)
+        
+        # Fallback para otros tipos
+        return str(technologies)
+    
+    @staticmethod
     def generate_pdf_from_cv_data(cv_data: Dict[str, Any]) -> Tuple[bytes, str]:
         """
         Genera un PDF a partir de cvData usando la plantilla Harvard
@@ -195,7 +221,7 @@ class CVPDFGenerator:
                     # Tecnologías
                     technologies = exp.get('technologies', [])
                     if technologies:
-                        tech_text = f"Tecnologías: {', '.join(technologies)}"
+                        tech_text = f"Tecnologías: {CVPDFGenerator._format_technologies(technologies)}"
                         story.append(Paragraph(tech_text, normal_style))
                     
                     story.append(Spacer(1, 8))
@@ -234,7 +260,7 @@ class CVPDFGenerator:
                         # Tecnologías
                         technologies = project.get('technologies', [])
                         if technologies:
-                            tech_text = f"Tecnologías: {', '.join(technologies)}"
+                            tech_text = f"Tecnologías: {CVPDFGenerator._format_technologies(technologies)}"
                             story.append(Paragraph(tech_text, normal_style))
                         
                         story.append(Spacer(1, 6))

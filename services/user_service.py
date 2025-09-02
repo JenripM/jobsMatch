@@ -286,9 +286,14 @@ async def upload_cv_to_database(pdf_file_content: bytes, user_id: str) -> Dict[s
         print(f"🚀 Iniciando subida de CV para usuario {user_id}")
         print(f"   📄 Tamaño del archivo: {len(pdf_file_content)} bytes")
         
-        # 1. Subir PDF a R2 Cloudflare
+        # 1. Generar CV ID primero
+        doc_ref = db_users.collection("userCVs").document()
+        cv_id = doc_ref.id
+        print(f"📄 CV ID generado: {cv_id}")
+        
+        # 2. Subir PDF a R2 Cloudflare con URL estable
         r2_start = time.time()
-        print("☁️ Subiendo PDF a R2 Cloudflare...")
+        print("☁️ Subiendo PDF a R2 Cloudflare con URL estable...")
         
         # Validar tipo y tamaño del archivo
         if not r2_storage.validate_file_type("cv.pdf", ALLOWED_FILE_TYPES['CV']):
@@ -297,19 +302,23 @@ async def upload_cv_to_database(pdf_file_content: bytes, user_id: str) -> Dict[s
         if not r2_storage.validate_file_size(len(pdf_file_content), FILE_SIZE_LIMITS['CV']):
             raise Exception(f"Archivo demasiado grande. Máximo {FILE_SIZE_LIMITS['CV']}MB")
         
-        # Subir a R2
+        # Generar nombre bonito para el archivo (se usará en Content-Disposition)
+        pretty_filename = "cv.pdf"  # Por ahora genérico, se actualizará después con los datos extraídos
+        
+        # Subir a R2 con clave estable
+        stable_key = r2_storage.generate_stable_cv_key(cv_id)
         file_url = await r2_storage.upload_file_to_r2(
             file_data=pdf_file_content,
-            file_name="cv.pdf",
+            file_name=pretty_filename,
             content_type="application/pdf",
-            prefix="cv"
+            stable_key=stable_key  # Usar clave estable
         )
         r2_time = time.time() - r2_start
         timing_stats['r2_upload'] = r2_time
         print(f"   ⏱️ Subida a R2: {r2_time:.4f}s")
-        print(f"   🔗 URL del archivo: {file_url}")
+        print(f"   🔗 URL estable del archivo: {file_url}")
         
-        # 2. Extraer texto del PDF
+        # 3. Extraer texto del PDF
         pdf_start = time.time()
         print("📄 Extrayendo texto del PDF...")
         cv_text = extract_text_from_pdf_file(pdf_file_content)
@@ -318,7 +327,7 @@ async def upload_cv_to_database(pdf_file_content: bytes, user_id: str) -> Dict[s
         print(f"   ⏱️ Extracción de PDF: {pdf_time:.4f}s")
         print(f"   📝 Longitud del texto: {len(cv_text)} caracteres")
         
-        # 3. Procesar en paralelo: embeddings y datos estructurados
+        # 4. Procesar en paralelo: embeddings y datos estructurados
         parallel_start = time.time()
         print("⚡ Procesando embeddings y datos en paralelo...")
         
@@ -334,7 +343,25 @@ async def upload_cv_to_database(pdf_file_content: bytes, user_id: str) -> Dict[s
         print(f"   🔗 Embeddings generados: {list(embeddings.keys())}")
         print(f"   📊 Secciones de datos: {list(cv_data.keys())}")
         
-        # 4. Preparar documento para Firestore
+        # 4.5. Actualizar Content-Disposition del archivo con nombre bonito
+        try:
+            pretty_filename = r2_storage.generate_pretty_cv_filename(cv_data)
+            if pretty_filename != "cv.pdf":  # Solo actualizar si hay un nombre mejor
+                print(f"   📝 Actualizando nombre de descarga a: {pretty_filename}")
+                
+                # Re-subir solo para actualizar Content-Disposition (R2 soporta esto)
+                await r2_storage.upload_file_to_r2(
+                    file_data=pdf_file_content,
+                    file_name=pretty_filename,
+                    content_type="application/pdf",
+                    stable_key=stable_key
+                )
+                print(f"   ✅ Nombre de descarga actualizado")
+        except Exception as e:
+            print(f"   ⚠️ No se pudo actualizar nombre de descarga: {e}")
+            # No fallar por esto, continuar normalmente
+        
+        # 5. Preparar documento para Firestore
         prep_start = time.time()
         print("📋 Preparando documento para Firestore...")
         now = datetime.now()
@@ -354,17 +381,16 @@ async def upload_cv_to_database(pdf_file_content: bytes, user_id: str) -> Dict[s
         print(f"   ⏱️ Preparación del documento: {prep_time:.4f}s")
         print(f"   📄 Título generado: {cv_document['title']}")
         
-        # 5. Guardar en Firestore
+        # 6. Guardar en Firestore (usando el doc_ref ya creado)
         db_start = time.time()
         print("💾 Guardando en base de datos...")
-        doc_ref = db_users.collection("userCVs").document()
         doc_ref.set(cv_document)
         db_time = time.time() - db_start
         timing_stats['database_save'] = db_time
         print(f"   ⏱️ Guardado en base de datos: {db_time:.4f}s")
         print(f"   🆔 ID del documento: {doc_ref.id}")
         
-        # 6. Verificar si es el primer CV del usuario y actualizar Users
+        # 7. Verificar si es el primer CV del usuario y actualizar Users
         users_update_start = time.time()
         print("👤 Verificando si es el primer CV del usuario...")
         
@@ -403,7 +429,7 @@ async def upload_cv_to_database(pdf_file_content: bytes, user_id: str) -> Dict[s
         timing_stats['users_update'] = users_update_time
         print(f"   ⏱️ Actualización de Users: {users_update_time:.4f}s")
         
-        # 7. Preparar respuesta
+        # 8. Preparar respuesta
         response_start = time.time()
         print("📤 Preparando respuesta...")
         
@@ -610,11 +636,16 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
 
         print(f"🚀 Añadiendo CV para usuario {user_id}")
 
-        # 1) Si hay archivo PDF, subirlo a R2
+        # 1) Generar el documento de Firestore primero para obtener el cv_id
+        doc_ref = db_users.collection("userCVs").document()
+        cv_id = doc_ref.id
+        print(f"📄 CV ID generado: {cv_id}")
+
+        # 2) Si hay archivo PDF, subirlo a R2 con URL estable
         file_url = None
         if file_data and isinstance(file_data, bytes):
             r2_start = time.time()
-            print("☁️ Subiendo archivo PDF a R2 Cloudflare...")
+            print("☁️ Subiendo archivo PDF a R2 Cloudflare con URL estable...")
             
             # Validar tipo y tamaño del archivo
             if not r2_storage.validate_file_type(file_name, ALLOWED_FILE_TYPES['CV']):
@@ -623,19 +654,25 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
             if not r2_storage.validate_file_size(len(file_data), FILE_SIZE_LIMITS['CV']):
                 raise Exception(f"Archivo demasiado grande. Máximo {FILE_SIZE_LIMITS['CV']}MB")
             
-            # Subir a R2
+            # Generar nombre bonito si hay datos del CV
+            pretty_filename = file_name
+            if cv_data:
+                pretty_filename = r2_storage.generate_pretty_cv_filename(cv_data)
+            
+            # Generar clave estable y subir a R2
+            stable_key = r2_storage.generate_stable_cv_key(cv_id)
             file_url = await r2_storage.upload_file_to_r2(
                 file_data=file_data,
-                file_name=file_name,
+                file_name=pretty_filename,
                 content_type="application/pdf",
-                prefix="cv"
+                stable_key=stable_key  # Usar clave estable
             )
             r2_time = time.time() - r2_start
             timing_stats["r2_upload"] = r2_time
             print(f"   ⏱️ Subida a R2: {r2_time:.4f}s")
-            print(f"   🔗 URL del archivo: {file_url}")
+            print(f"   🔗 URL estable del archivo: {file_url}")
 
-        # 2) Generar embeddings solo si cv_data no está vacío
+        # 3) Generar embeddings solo si cv_data no está vacío
         embeddings = None
         if cv_data:  # Solo generar embeddings si hay datos
             emb_start = time.time()
@@ -649,7 +686,7 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
         else:
             print("   ⏭️ CV data está vacío, saltando generación de embeddings")
 
-        # 3) Preparar documento para Firestore: subir tal cual viene y añadir 'embeddings' y 'fileUrl'
+        # 4) Preparar documento para Firestore: subir tal cual viene y añadir 'embeddings' y 'fileUrl'
         prep_start = time.time()
         cv_document: Dict[str, Any] = {**cv}
         
@@ -663,10 +700,10 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
         # Agregar fileUrl si se subió a R2
         if file_url:
             cv_document["fileUrl"] = file_url
-        # Si no hay fileUrl pero hay cv_data, generar PDF automáticamente
+        # Si no hay fileUrl pero hay cv_data, generar PDF automáticamente con URL estable
         elif cv_data and not file_url:
             try:
-                print("   📄 Generando PDF automáticamente desde cvData...")
+                print("   📄 Generando PDF automáticamente desde cvData con URL estable...")
                 pdf_start = time.time()
                 
                 # Importar el generador de PDF
@@ -675,12 +712,16 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
                 # Generar PDF a partir del cvData
                 pdf_content, pdf_file_name = CVPDFGenerator.generate_pdf_from_cv_data(cv_data)
                 
-                # Subir PDF generado a R2
+                # Generar nombre bonito para descarga
+                pretty_filename = r2_storage.generate_pretty_cv_filename(cv_data)
+                
+                # Subir PDF generado a R2 con clave estable
+                stable_key = r2_storage.generate_stable_cv_key(cv_id)
                 auto_file_url = await r2_storage.upload_file_to_r2(
                     file_data=pdf_content,
-                    file_name=pdf_file_name,
+                    file_name=pretty_filename,
                     content_type="application/pdf",
-                    prefix="cv"
+                    stable_key=stable_key  # Usar clave estable
                 )
                 
                 # Agregar fileUrl al documento
@@ -690,7 +731,7 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
                 pdf_time = time.time() - pdf_start
                 timing_stats["pdf_generation"] = pdf_time
                 print(f"   ⏱️ PDF generado y subido en {pdf_time:.4f}s")
-                print(f"   🔗 URL del PDF generado: {auto_file_url}")
+                print(f"   🔗 URL estable del PDF generado: {auto_file_url}")
                 
             except Exception as pdf_error:
                 print(f"   ⚠️ Error generando PDF automático (continuando sin fileUrl): {pdf_error}")
@@ -701,15 +742,14 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
         timing_stats["document_preparation"] = prep_time
         print(f"   ⏱️ Documento preparado en {prep_time:.4f}s")
 
-        # 4) Guardar en Firestore
+        # 5) Guardar en Firestore (usando el doc_ref ya creado)
         db_start = time.time()
-        doc_ref = db_users.collection("userCVs").document()
         doc_ref.set(cv_document)
         db_time = time.time() - db_start
         timing_stats["database_save"] = db_time
         print(f"   💾 Guardado en {db_time:.4f}s | ID: {doc_ref.id}")
 
-        # 5) Si es el primer CV del usuario, actualizar la colección Users
+        # 6) Si es el primer CV del usuario, actualizar la colección Users
         users_update_start = time.time()
         existing_cvs_list = list(db_users.collection("userCVs").where("userId", "==", user_id).stream())
         if len(existing_cvs_list) == 1:
@@ -731,7 +771,7 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
         users_update_time = time.time() - users_update_start
         timing_stats["users_update"] = users_update_time
 
-        # 6) Preparar respuesta
+        # 7) Preparar respuesta
         response_start = time.time()
         is_first_cv = len(existing_cvs_list) == 1
         response: Dict[str, Any] = {
@@ -821,11 +861,11 @@ async def update_cv(cv_id: str, cv: Dict[str, Any]) -> Dict[str, Any]:
             if key not in excluded_fields:
                 update_payload[key] = value
 
-        # 1) Si hay archivo PDF, eliminar el anterior y subir el nuevo a R2
+        # 1) Si hay archivo PDF, sobrescribir usando URL estable (sin borrar)
         file_url = None
         if file_data and isinstance(file_data, bytes):
             r2_start = time.time()
-            print("☁️ Procesando archivo PDF actualizado...")
+            print("☁️ Procesando archivo PDF actualizado con URL estable...")
             
             # Validar tipo y tamaño del archivo
             if not r2_storage.validate_file_type(file_name, ALLOWED_FILE_TYPES['CV']):
@@ -834,40 +874,27 @@ async def update_cv(cv_id: str, cv: Dict[str, Any]) -> Dict[str, Any]:
             if not r2_storage.validate_file_size(len(file_data), FILE_SIZE_LIMITS['CV']):
                 raise Exception(f"Archivo demasiado grande. Máximo {FILE_SIZE_LIMITS['CV']}MB")
             
-            # Eliminar archivo anterior si existe
-            current_file_url = current_cv.get("fileUrl")
-            if current_file_url:
-                delete_start = time.time()
-                print("🗑️ Eliminando archivo anterior de R2...")
-                
-                # Extraer nombre del archivo de la URL actual
-                old_file_name = r2_storage.extract_file_name_from_url(current_file_url)
-                if old_file_name:
-                    deleted = await r2_storage.delete_file_from_r2(old_file_name)
-                    if deleted:
-                        print(f"   ✅ Archivo anterior eliminado: {old_file_name}")
-                    else:
-                        print(f"   ℹ️ Archivo anterior no existía: {old_file_name}")
-                else:
-                    print(f"   ⚠️ No se pudo extraer nombre del archivo anterior: {current_file_url}")
-                
-                delete_time = time.time() - delete_start
-                timing_stats["r2_delete"] = delete_time
-                print(f"   ⏱️ Eliminación de archivo anterior: {delete_time:.4f}s")
-            
-            # Subir nuevo archivo a R2
+            # Subir archivo sobrescribiendo usando clave estable (sin borrar)
             upload_start = time.time()
-            print("📤 Subiendo nuevo archivo PDF a R2...")
+            print("📤 Sobrescribiendo archivo PDF en R2 con URL estable...")
+            
+            # Generar nombre bonito si hay datos del CV
+            pretty_filename = file_name
+            if cv_data:
+                pretty_filename = r2_storage.generate_pretty_cv_filename(cv_data)
+            
+            # Generar clave estable y subir
+            stable_key = r2_storage.generate_stable_cv_key(cv_id)
             file_url = await r2_storage.upload_file_to_r2(
                 file_data=file_data,
-                file_name=file_name,
+                file_name=pretty_filename,
                 content_type="application/pdf",
-                prefix="cv"
+                stable_key=stable_key  # Usar clave estable
             )
             upload_time = time.time() - upload_start
             timing_stats["r2_upload"] = upload_time
-            print(f"   ⏱️ Subida de nuevo archivo: {upload_time:.4f}s")
-            print(f"   🔗 URL del nuevo archivo: {file_url}")
+            print(f"   ⏱️ Sobrescritura de archivo: {upload_time:.4f}s")
+            print(f"   🔗 URL estable del archivo: {file_url}")
             
             r2_time = time.time() - r2_start
             timing_stats["r2_total"] = r2_time
@@ -899,9 +926,25 @@ async def update_cv(cv_id: str, cv: Dict[str, Any]) -> Dict[str, Any]:
             print(f"   ✅ CV ya tiene embeddings y data no cambió, saltando generación")
             timing_stats["embeddings_generation"] = 0.0
 
-        # 3) Si el data cambió, generar nuevo PDF y actualizar fileUrl
-        if data_changed:
-            print(f"   📄 Data cambió, generando nuevo PDF...")
+        # 3) Verificar si necesitamos migrar a URL estable (compatibilidad hacia atrás)
+        current_file_url = current_cv.get("fileUrl")
+        should_migrate_to_stable_url = False
+        
+        if current_file_url and not data_changed:
+            # Verificar si la URL actual NO es estable (no sigue el formato cv/{cv_id}.pdf)
+            expected_stable_url = r2_storage.generate_stable_cv_url(cv_id)
+            if current_file_url != expected_stable_url:
+                should_migrate_to_stable_url = True
+                print(f"   🔄 Detectada URL no estable, migrando a URL estable...")
+                print(f"      URL actual: {current_file_url}")
+                print(f"      URL estable: {expected_stable_url}")
+        
+        # 4) Si el data cambió O necesitamos migrar a URL estable, generar/actualizar PDF
+        if data_changed or should_migrate_to_stable_url:
+            if data_changed:
+                print(f"   📄 Data cambió, generando nuevo PDF con URL estable...")
+            else:
+                print(f"   📄 Migrando a URL estable, regenerando PDF...")
             pdf_start = time.time()
             
             try:
@@ -911,40 +954,24 @@ async def update_cv(cv_id: str, cv: Dict[str, Any]) -> Dict[str, Any]:
                 # Generar PDF a partir del cvData
                 pdf_content, pdf_file_name = CVPDFGenerator.generate_pdf_from_cv_data(cv_data)
                 
-                # Eliminar archivo anterior si existe
-                current_file_url = current_cv.get("fileUrl")
-                if current_file_url:
-                    delete_start = time.time()
-                    print("   🗑️ Eliminando archivo anterior de R2...")
-                    
-                    # Extraer nombre del archivo de la URL actual
-                    old_file_name = r2_storage.extract_file_name_from_url(current_file_url)
-                    if old_file_name:
-                        deleted = await r2_storage.delete_file_from_r2(old_file_name)
-                        if deleted:
-                            print(f"      ✅ Archivo anterior eliminado: {old_file_name}")
-                        else:
-                            print(f"      ℹ️ Archivo anterior no existía: {old_file_name}")
-                    else:
-                        print(f"      ⚠️ No se pudo extraer nombre del archivo anterior: {current_file_url}")
-                    
-                    delete_time = time.time() - delete_start
-                    timing_stats["r2_delete"] = delete_time
-                    print(f"      ⏱️ Eliminación de archivo anterior: {delete_time:.4f}s")
+                # Generar nombre bonito para descarga
+                pretty_filename = r2_storage.generate_pretty_cv_filename(cv_data)
                 
-                # Subir nuevo PDF a R2
+                # Subir nuevo PDF a R2 sobrescribiendo con clave estable
                 upload_start = time.time()
-                print("   📤 Subiendo nuevo PDF a R2...")
+                print("   📤 Sobrescribiendo PDF en R2 con URL estable...")
+                
+                stable_key = r2_storage.generate_stable_cv_key(cv_id)
                 new_file_url = await r2_storage.upload_file_to_r2(
                     file_data=pdf_content,
-                    file_name=pdf_file_name,
+                    file_name=pretty_filename,
                     content_type="application/pdf",
-                    prefix="cv"
+                    stable_key=stable_key  # Usar clave estable
                 )
                 upload_time = time.time() - upload_start
                 timing_stats["r2_upload"] = upload_time
-                print(f"      ⏱️ Subida de nuevo PDF: {upload_time:.4f}s")
-                print(f"      🔗 URL del nuevo archivo: {new_file_url}")
+                print(f"      ⏱️ Sobrescritura de PDF: {upload_time:.4f}s")
+                print(f"      🔗 URL estable del archivo: {new_file_url}")
                 
                 # Agregar fileUrl al payload de actualización
                 update_payload["fileUrl"] = new_file_url
@@ -959,7 +986,7 @@ async def update_cv(cv_id: str, cv: Dict[str, Any]) -> Dict[str, Any]:
                 # No fallar la actualización si el PDF falla, solo continuar
                 timing_stats["pdf_generation"] = 0.0
 
-        # 4) Actualizar en la base de datos
+        # 5) Actualizar en la base de datos
         db_start = time.time()
         doc_ref.update(update_payload)
         db_time = time.time() - db_start
@@ -1204,12 +1231,19 @@ async def adapt_cv_summary_for_job(original_cv: Dict[str, Any], job_context: Dic
             # Generar PDF a partir del cvData adaptado
             pdf_content, pdf_file_name = CVPDFGenerator.generate_pdf_from_cv_data(adapted_cv["data"])
             
-            # Subir nuevo PDF a R2
+            # Generar CV ID para el nuevo CV adaptado
+            adapted_cv_id = db_users.collection("userCVs").document().id
+            
+            # Generar nombre bonito para descarga
+            pretty_filename = r2_storage.generate_pretty_cv_filename(adapted_cv["data"])
+            
+            # Subir nuevo PDF a R2 con URL estable
+            stable_key = r2_storage.generate_stable_cv_key(adapted_cv_id)
             new_file_url = await r2_storage.upload_file_to_r2(
                 file_data=pdf_content,
-                file_name=pdf_file_name,
+                file_name=pretty_filename,
                 content_type="application/pdf",
-                prefix="cv"
+                stable_key=stable_key  # Usar clave estable
             )
             
             # Actualizar fileUrl en el CV adaptado
@@ -1245,8 +1279,8 @@ async def adapt_cv_summary_for_job(original_cv: Dict[str, Any], job_context: Dic
         # Remover campos que no deben ir a la base de datos
         adapted_cv.pop("id", None)  # No incluir el ID del CV original
         
-        # Guardar en Firestore
-        doc_ref = db_users.collection("userCVs").document()
+        # Guardar en Firestore usando el ID ya generado
+        doc_ref = db_users.collection("userCVs").document(adapted_cv_id)
         doc_ref.set(adapted_cv)
         
         db_time = time.time() - db_start

@@ -82,12 +82,69 @@ class R2StorageService:
         
         logger.info('✅ Configuración R2 válida')
     
+    def generate_stable_cv_key(self, cv_id: str) -> str:
+        """
+        Genera una clave estable para archivos CV basada en el cv_id.
+        
+        Args:
+            cv_id: ID del CV
+            
+        Returns:
+            str: Clave estable para el archivo (ej: "cv/abc123.pdf")
+        """
+        return f"cv/{cv_id}.pdf"
+    
+    def generate_stable_cv_url(self, cv_id: str) -> str:
+        """
+        Genera la URL pública estable para un CV basado en el cv_id.
+        
+        Args:
+            cv_id: ID del CV
+            
+        Returns:
+            str: URL pública estable del CV
+        """
+        # Cargar configuración si no está cargada
+        self._load_config()
+        
+        stable_key = self.generate_stable_cv_key(cv_id)
+        return f"{self.public_url}/{stable_key}"
+    
+    def generate_pretty_cv_filename(self, cv_data: dict) -> str:
+        """
+        Genera un nombre bonito para el archivo CV basado en los datos del CV.
+        
+        Args:
+            cv_data: Datos del CV con información personal
+            
+        Returns:
+            str: Nombre bonito para el archivo (ej: "CV_Juan_Perez.pdf")
+        """
+        try:
+            # Intentar extraer el nombre completo
+            personal_info = cv_data.get('personalInfo', {}) if cv_data else {}
+            full_name = personal_info.get('fullName', '')
+            
+            if full_name and full_name.strip():
+                # Limpiar el nombre (remover caracteres especiales)
+                clean_name = ''.join(c for c in full_name if c.isalnum() or c in ' _-').strip()
+                clean_name = clean_name.replace(' ', '_')
+                return f"CV_{clean_name}.pdf"
+            else:
+                # Fallback si no hay nombre
+                return "CV.pdf"
+                
+        except Exception:
+            # Si hay cualquier error, usar nombre genérico
+            return "CV.pdf"
+
     async def upload_file_to_r2(
         self,
         file_data: Union[bytes, bytearray],
         file_name: str,
         content_type: Optional[str] = None,
-        prefix: Optional[str] = None
+        prefix: Optional[str] = None,
+        stable_key: Optional[str] = None
     ) -> str:
         """
         Subir un archivo a Cloudflare R2
@@ -97,6 +154,7 @@ class R2StorageService:
             file_name: Nombre del archivo
             content_type: Tipo de contenido (opcional, se infiere si no se proporciona)
             prefix: Prefijo opcional para el nombre del archivo (ej: 'cv', 'interview-audio')
+            stable_key: Clave fija para el archivo (opcional, sobrescribe prefix/unique generation)
             
         Returns:
             str: URL pública del archivo subido
@@ -105,39 +163,55 @@ class R2StorageService:
         self._load_config()
         
         try:
-            logger.info('📤 === INICIO UPLOAD R2 ===')
-            logger.info(f'📁 Archivo a subir: {file_name}, tamaño: {len(file_data)} bytes')
+            #logger.info('📤 === INICIO UPLOAD R2 ===')
+            #logger.info(f'📁 Archivo a subir: {file_name}, tamaño: {len(file_data)} bytes')
             
-            # Generar nombre único para el archivo
-            unique_file_name = self._generate_unique_file_name(file_name, prefix)
+            # Usar clave estable si se proporciona, sino generar única
+            if stable_key:
+                object_key = stable_key
+                #logger.info(f'🔗 Usando clave estable: {object_key}')
+            else:
+                object_key = self._generate_unique_file_name(file_name, prefix)
+                #logger.info(f'🎲 Clave única generada: {object_key}')
             
             # Determinar content type si no se proporciona
             if not content_type:
                 content_type = self._get_content_type(file_name)
             
-            logger.info(f'📋 Datos preparados: {unique_file_name}, content-type: {content_type}')
+            #logger.info(f'📋 Datos preparados: {object_key}, content-type: {content_type}')
+            
+            # Configurar headers adicionales para URLs estables (evitar caché de versiones antiguas)
+            extra_args = {
+                'ContentType': content_type,
+                'ACL': 'public-read'
+            }
+            
+            # Si es clave estable, agregar control de caché y nombre de descarga bonito
+            if stable_key:
+                extra_args['CacheControl'] = 'no-cache, no-store, must-revalidate'
+                # Usar el nombre original del archivo para la descarga (más bonito que el ID)
+                extra_args['ContentDisposition'] = f'inline; filename="{file_name}"'
             
             # Subir archivo a R2
             response = self.s3_client.put_object(
                 Bucket=self.bucket_name,
-                Key=unique_file_name,
+                Key=object_key,
                 Body=file_data,
-                ContentType=content_type,
-                ACL='public-read'  # Hacer el archivo público para lectura
+                **extra_args
             )
             
-            logger.info(f'✅ Upload exitoso a R2: ETag={response.get("ETag")}')
+            #logger.info(f'✅ Upload exitoso a R2: ETag={response.get("ETag")}')
             
             # Debug: Verificar valores antes de generar URL
-            logger.info(f'🔍 Debug URL generation:')
-            logger.info(f'   self.public_url: "{self.public_url}"')
-            logger.info(f'   unique_file_name: "{unique_file_name}"')
+            #logger.info(f'🔍 Debug URL generation:')
+            #logger.info(f'   self.public_url: "{self.public_url}"')
+            #logger.info(f'   object_key: "{object_key}"')
             
             # Generar URL pública
-            public_url = f"{self.public_url}/{unique_file_name}"
+            public_url = f"{self.public_url}/{object_key}"
             
-            logger.info(f'🔗 URL pública generada: "{public_url}"')
-            logger.info('📤 === FIN UPLOAD R2 ===')
+            #logger.info(f'🔗 URL pública generada: "{public_url}"')
+            #logger.info('📤 === FIN UPLOAD R2 ===')
             
             return public_url
             
