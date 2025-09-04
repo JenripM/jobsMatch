@@ -36,6 +36,7 @@ from services.storage_service import r2_storage, ALLOWED_FILE_TYPES, FILE_SIZE_L
 sys.path.append('..')
 from db import db_users
 from services.embedding_service import get_embedding_from_text
+from services.competencies_service import start_competencies_processing
 from schemas.cv_types import CVData, UserMetadata
 from prompts.cv_prompts import CV_FIELDS_INFERENCE_PROMPT, CV_METADATA_INFERENCE_PROMPT
 
@@ -429,7 +430,11 @@ async def upload_cv_to_database(pdf_file_content: bytes, user_id: str) -> Dict[s
         timing_stats['users_update'] = users_update_time
         print(f"   ⏱️ Actualización de Users: {users_update_time:.4f}s")
         
-        # 8. Preparar respuesta
+        # 8. Iniciar procesamiento asíncrono de competencias (en paralelo)
+        print("🚀 Iniciando procesamiento asíncrono de competencias...")
+        start_competencies_processing(user_id, cv_data)
+        
+        # 9. Preparar respuesta
         response_start = time.time()
         print("📤 Preparando respuesta...")
         
@@ -771,7 +776,12 @@ async def save_cv(cv: Dict[str, Any]) -> Dict[str, Any]:
         users_update_time = time.time() - users_update_start
         timing_stats["users_update"] = users_update_time
 
-        # 7) Preparar respuesta
+        # 7) Iniciar procesamiento asíncrono de competencias (en paralelo)
+        if cv_data:  # Solo procesar competencias si hay datos del CV
+            print("🚀 Iniciando procesamiento asíncrono de competencias...")
+            start_competencies_processing(user_id, cv_data)
+        
+        # 8) Preparar respuesta
         response_start = time.time()
         is_first_cv = len(existing_cvs_list) == 1
         response: Dict[str, Any] = {
@@ -840,6 +850,7 @@ async def update_cv(cv_id: str, cv: Dict[str, Any]) -> Dict[str, Any]:
         # Obtener el documento actual para verificar si ya tiene embeddings
         current_cv = snap.to_dict()
         has_embeddings = current_cv.get("embeddings") is not None
+        user_id = current_cv.get("userId")  # Obtener user_id para competencias
         
         # Verificar si el data ha cambiado (solo si se está actualizando data)
         data_changed = False
@@ -992,6 +1003,11 @@ async def update_cv(cv_id: str, cv: Dict[str, Any]) -> Dict[str, Any]:
         db_time = time.time() - db_start
         timing_stats["database_update"] = db_time
         print(f"   💾 Actualizado en {db_time:.4f}s")
+        
+        # 6) Iniciar procesamiento asíncrono de competencias (en paralelo)
+        if cv_data:  # Solo procesar competencias si hay datos del CV
+            print("🚀 Iniciando procesamiento asíncrono de competencias...")
+            start_competencies_processing(user_id, cv_data)
 
         total_time = time.time() - total_start_time
         timing_stats["total_time"] = total_time
