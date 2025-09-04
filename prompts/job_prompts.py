@@ -16,7 +16,9 @@ El JSON de salida debe tener exactamente esta estructura:
   "hard_skills": ["String"],
   "soft_skills": ["String"],
   "language_requirements": "String o null",
-  "related_degrees": ["String"]
+  "related_degrees": ["String"],
+  "required_competencies": ["String"],
+  "target_field": "String"
 }}
 
 Instrucciones para inferir cada campo:
@@ -56,6 +58,11 @@ Instrucciones para inferir cada campo:
 4. language_requirements: Busca cualquier mención de idiomas requeridos. Si la oferta pide un idioma, extrae el idioma y el nivel (ej: "Inglés Avanzado"). Si no se menciona ningún idioma, el valor debe ser null (sin comillas). El resultado debe ser una cadena o el valor null.
 
 5. related_degrees: Identifica las carreras o campos de estudio mencionados en la sección de "Requisitos" (ej: "Administración, Negocios Internacionales, Ingeniería Industrial, Economía y afines."). Enumera cada una de estas carreras en una lista de cadenas. Usa siempre el nombre largo y formal (por ejemplo, "Ingeniería Industrial").
+
+6. required_competencies: Extrae las competencias técnicas clave requeridas para este puesto. Incluye SOLO habilidades técnicas, herramientas, metodologías, software, certificaciones y conocimientos especializados (NO soft skills). Las competencias deben ser máximo 2 palabras cada una. IMPORTANTE: Devuelve TODAS las competencias en ESPAÑOL, independientemente del idioma de la oferta. Siempre verifica si se mencionan habilidades de "Inglés" como competencia clave. Ejemplos: "Photoshop", "Excel", "SAP", "Marketing Digital", "Gestión de Proyectos", "JavaScript", "Inglés".
+
+7. target_field: Analiza la oferta y selecciona el campo de estudio MÁS RELEVANTE de la siguiente lista. Devuelve SOLO el nombre del campo más apropiado, sin texto adicional. Selecciona únicamente 1 campo que mejor coincida con los requisitos del puesto.
+   Campos disponibles: Programming, Networks_Telecommunications, Civil_Engineering, Mechanical_Engineering, Electrical_Engineering, Chemical_Engineering, Industrial_Engineering, Textile_Engineering, Medicine, Dentistry, Psychology, Nursing, Veterinary, Business_Administration, Economics, Accounting, Marketing, Finance, Human_Resources, Law, Education, Social_Work, Mathematics, Physics, Chemistry, Biology, Architecture, Design, Communications, International_Relations, Tourism
 
 CRÍTICO: Tu respuesta debe ser SOLO el objeto JSON, sin ningún texto antes o después. El JSON debe ser sintácticamente válido y comenzar exactamente con {{.
 

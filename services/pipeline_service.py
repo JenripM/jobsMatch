@@ -472,7 +472,6 @@ class PipelineService:
                                           delay: float, batch_delay: float, progress_interval: int, 
                                           verbose: bool, days_back: int = 5) -> Dict[str, Any]:
         """Genera metadatos y retorna estadísticas detalladas"""
-        from services.job_service import extract_metadata_with_gemini
         from db import db_jobs
         from datetime import datetime, timedelta
         
@@ -543,7 +542,7 @@ class PipelineService:
                         self.log(f"Progreso: {i}/{total_docs} | ✅ {processed_count} | ❌ {error_count} | ⏭️ {skipped_count}", verbose)
                     continue
                 
-                # Generar metadatos
+                # Generar metadatos (ahora incluye todos los campos en una sola llamada)
                 metadata = await extract_metadata_with_gemini(title, description)
                 
                 if metadata:

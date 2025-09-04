@@ -28,5 +28,11 @@ class JobMetadata(BaseModel):
     related_degrees: List[str] = Field(
         description="Lista de carreras o campos de estudio mencionados"
     )
+    required_competencies: List[str] = Field(
+        description="Lista de competencias técnicas requeridas (solo hard skills, máximo 2 palabras cada una, en español)"
+    )
+    target_field: str = Field(
+        description="Campo de estudio normalizado más relevante de la lista predefinida"
+    )
 
 

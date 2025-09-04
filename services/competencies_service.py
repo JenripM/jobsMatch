@@ -3,8 +3,9 @@ Servicio de Competencias - Extracción de competencias de CVs usando IA
 
 Este servicio se encarga de:
 - Extraer competencias/keywords de un CV usando IA
-- Actualizar el campo 'competencies' en la colección 'users'
+- Actualizar el campo 'metadata.competencies' en la colección 'users'
 - Solo actualizar si las nuevas competencias son más largas que las existentes
+- Preservar otros campos del metadata existente
 """
 
 import asyncio
@@ -71,7 +72,7 @@ async def extract_competencies_from_cv(cv_data: Dict[str, Any]) -> List[str]:
 
 async def update_user_competencies(user_id: str, new_competencies: List[str]) -> bool:
     """
-    Actualiza las competencias del usuario en la colección 'users'
+    Actualiza las competencias del usuario en la colección 'users' dentro de metadata.competencies
     Solo actualiza si las nuevas competencias son más largas que las existentes
     
     Args:
@@ -86,7 +87,7 @@ async def update_user_competencies(user_id: str, new_competencies: List[str]) ->
             print(f"   ⚠️ No hay competencias para actualizar")
             return False
             
-        print(f"🔄 Actualizando competencias para usuario {user_id}...")
+        print(f"🔄 Actualizando competencias en metadata para usuario {user_id}...")
         
         # Obtener documento del usuario
         user_doc_ref = db_users.collection("users").document(user_id)
@@ -94,37 +95,46 @@ async def update_user_competencies(user_id: str, new_competencies: List[str]) ->
         
         if not user_doc.exists:
             print(f"   ⚠️ Usuario {user_id} no existe, creando documento...")
-            # Crear documento del usuario
+            # Crear documento del usuario con metadata
             user_doc_ref.set({
                 "id": user_id,
-                "competencies": new_competencies,
+                "metadata": {
+                    "competencies": new_competencies
+                },
                 "createdAt": datetime.now(),
                 "updatedAt": datetime.now()
             })
-            print(f"   ✅ Usuario creado con {len(new_competencies)} competencias")
+            print(f"   ✅ Usuario creado con {len(new_competencies)} competencias en metadata")
             return True
         
-        # Obtener competencias existentes
+        # Obtener datos existentes del usuario
         user_data = user_doc.to_dict() or {}
-        existing_competencies = user_data.get("competencies", [])
+        existing_metadata = user_data.get("metadata", {})
+        existing_competencies = existing_metadata.get("competencies", [])
         
         print(f"   📊 Competencias existentes: {len(existing_competencies)}")
         print(f"   📊 Competencias nuevas: {len(new_competencies)}")
         
         # Solo actualizar si las nuevas competencias son más largas
         if len(new_competencies) > len(existing_competencies):
+            # Actualizar solo el campo competencies dentro de metadata, preservando otros campos
+            updated_metadata = {
+                **existing_metadata,  # Preservar metadata existente
+                "competencies": new_competencies  # Actualizar solo competencies
+            }
+            
             user_doc_ref.update({
-                "competencies": new_competencies,
+                "metadata": updated_metadata,
                 "updatedAt": datetime.now()
             })
-            print(f"   ✅ Competencias actualizadas: {len(new_competencies)} (anterior: {len(existing_competencies)})")
+            print(f"   ✅ Competencias actualizadas en metadata: {len(new_competencies)} (anterior: {len(existing_competencies)})")
             return True
         else:
             print(f"   ⏭️ Competencias no actualizadas: {len(new_competencies)} <= {len(existing_competencies)}")
             return False
             
     except Exception as e:
-        print(f"❌ Error actualizando competencias: {e}")
+        print(f"❌ Error actualizando competencias en metadata: {e}")
         return False
 
 async def process_cv_competencies_async(user_id: str, cv_data: Dict[str, Any]) -> None:

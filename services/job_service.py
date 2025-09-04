@@ -517,6 +517,42 @@ prompt = PromptTemplate(
     partial_variables={"format_instructions": parser.get_format_instructions()}
 )
 
+# Campos de estudio normalizados
+NORMALIZED_FIELDS_OF_STUDY = [
+    "Programming",              # Programación/Desarrollo de Software
+    "Networks_Telecommunications", # Redes y Telecomunicaciones
+    "Civil_Engineering",        # Ingeniería Civil
+    "Mechanical_Engineering",   # Ingeniería Mecánica
+    "Electrical_Engineering",   # Ingeniería Eléctrica
+    "Chemical_Engineering",     # Ingeniería Química
+    "Industrial_Engineering",   # Ingeniería Industrial
+    "Textile_Engineering",      # Ingeniería Textil
+    "Medicine",                 # Medicina
+    "Dentistry",               # Odontología
+    "Psychology",              # Psicología
+    "Nursing",                 # Enfermería
+    "Veterinary",              # Veterinaria
+    "Business_Administration", # Administración de Empresas
+    "Economics",               # Economía
+    "Accounting",              # Contabilidad
+    "Marketing",               # Marketing
+    "Finance",                 # Finanzas
+    "Human_Resources",         # Recursos Humanos
+    "Law",                     # Derecho
+    "Education",               # Educación
+    "Social_Work",             # Trabajo Social
+    "Mathematics",             # Matemáticas
+    "Physics",                 # Física
+    "Chemistry",               # Química
+    "Biology",                 # Biología
+    "Architecture",            # Arquitectura
+    "Design",                  # Diseño (gráfico, industrial, etc.)
+    "Communications",          # Comunicaciones/Periodismo
+    "International_Relations", # Relaciones Internacionales
+    "Tourism",                 # Turismo
+]
+
+
 async def extract_metadata_with_gemini(title: str | None, description: str | None) -> dict | None:
     """
     Usa Gemini para extraer metadatos estructurados de una oferta de empleo.
@@ -648,7 +684,7 @@ async def generate_metadata_for_collection(collection_name=None, overwrite_exist
                     print(f"Progreso: {i}/{total_docs} | ✅ {processed_count} | ❌ {error_count} | ⏭️ {skipped_count}")
                 continue
             
-            # Generar metadatos
+            # Generar metadatos (ahora incluye todos los campos en una sola llamada)
             metadata = await extract_metadata_with_gemini(title, description)
             
             if metadata:
