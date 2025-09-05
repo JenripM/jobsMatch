@@ -474,6 +474,7 @@ class PipelineService:
         """Genera metadatos y retorna estadísticas detalladas"""
         from db import db_jobs
         from datetime import datetime, timedelta
+        from services.job_service import extract_metadata_with_gemini
         
         self.log(f"Iniciando generación de metadatos para colección '{collection_name}' (sobrescribir: {overwrite_existing}, últimos {days_back} días)...", verbose)
         
