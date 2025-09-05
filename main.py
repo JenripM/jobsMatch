@@ -268,6 +268,7 @@ async def match_practices(request: Request):
         # Usar siempre streaming puro sin compresión
         if STREAMING_ENABLED and len(practicas_con_similitud) > 0:
             # Aplicar límite también en streaming
+            print(f"Limite impuesto por el frontend: {request_data.get('limit', 0)}")
             limit = request_data.get("limit", DEFAULT_PRACTICES_LIMIT)
             practicas_limitadas = practicas_con_similitud[:limit]
             

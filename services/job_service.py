@@ -45,9 +45,7 @@ def normalize_similarity_by_aspect(aspect_name: str, similarity: float) -> float
         normalized = normalize_cosine_similarity(similarity, min_sim=0.8, max_sim=1)
     elif aspect_name == 'sector_affinity':
         # Sector affinity: parámetros intermedios
-        print(f"🔍 sector_affinity before normalize: {similarity:.4f}")
         normalized = normalize_cosine_similarity(similarity, min_sim=0.875, max_sim=0.895)
-        print(f"🔍 sector_affinity after normalize: {normalized:.4f}")
     else:
         # General: más permisiva
         normalized = normalize_cosine_similarity(similarity, min_sim=0.8, max_sim=1)
@@ -137,7 +135,7 @@ async def buscar_practicas_afines(percentage_threshold: float = 0, sinceDays: in
                 vector_field="embedding",
                 query_vector=query_vector,
                 distance_measure=DistanceMeasure.COSINE,
-                limit=500,
+                limit=1000,
                 distance_result_field="vector_distance",
             )
             
